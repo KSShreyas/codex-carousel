@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import path from 'path';
-import { AppConfig } from '../types';
+import { AppConfig } from './types';
 
 export const ConfigSchema = z.object({
   stateDir: z.string().default('./state'),
@@ -24,6 +24,7 @@ export const ConfigSchema = z.object({
   failurePenalty: z.number().default(100),
   uiRefreshIntervalMs: z.number().default(2000),
   bridgeReloadTimeoutMs: z.number().default(10000),
+  ledgerRetentionCount: z.number().default(50),
 });
 
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
