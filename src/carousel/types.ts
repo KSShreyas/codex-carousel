@@ -73,6 +73,7 @@ export interface AccountHealthRecord {
 export interface RuntimeState {
   activeAccountId: AccountId | null;
   drainingAccountId: AccountId | null;
+  previousAccountId: AccountId | null;
   uptimeStart: string;
   lastSwitchAt: string | null;
   sessionStatus: 'idle' | 'busy' | 'switching';
@@ -134,6 +135,7 @@ export interface AppConfig {
   weeklyThreshold: number;
   cooldownDurationMinutes: number;
   rateLimitCooldownMinutes: number;
+  authFailureCooldownMinutes: number;
   recoveryProbeIntervalMinutes: number;
   maxConsecutiveFailures: number;
   fairRotation: boolean;

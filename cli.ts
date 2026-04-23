@@ -34,22 +34,37 @@ program.command('status')
 program.command('rotate')
   .description('Trigger manual account rotation')
   .action(async () => {
-    const res = await fetch(`${API_BASE}/switch`, { method: 'POST' });
-    if (res.ok) console.log('Rotation successful');
-    else console.error('Rotation failed');
+    const res = await fetch(`${API_BASE}/rotate`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`Rotation successful. Selected: ${data.selectedId || 'N/A'}`);
+    } else {
+      const err = await res.json();
+      console.error(`Rotation failed: ${err.error}`);
+    }
   });
 
 program.command('import <alias>')
   .description('Import a new account')
   .option('-p, --priority <number>', 'Account priority', '1')
+  .option('-s, --source <path>', 'Source path for auth file')
   .action(async (alias, options) => {
     const res = await fetch(`${API_BASE}/accounts/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alias, priority: parseInt(options.priority) })
+      body: JSON.stringify({ 
+        alias, 
+        priority: parseInt(options.priority),
+        sourcePath: options.source
+      })
     });
-    if (res.ok) console.log(`Imported ${alias}`);
-    else console.error('Import failed');
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`Imported ${alias} as ${data.id}`);
+    } else {
+      const err = await res.json();
+      console.error(`Import failed: ${err.error}`);
+    }
   });
 
 program.command('list')

@@ -9,29 +9,34 @@ import {
   AccountHealthRecord, 
   AccountState, 
   UsageSnapshot, 
-  AppConfig 
+  AppConfig,
+  FailureKind
 } from './types';
 import { Storage } from './storage';
 import { StateMachine } from './stateMachine';
 import { logger } from './logging';
 
 export class Registry {
-  private accounts: AccountRegistryRecord[] = [];
-  private health: Record<AccountId, AccountHealthRecord> = {};
+  private accounts: Map<AccountId, AccountRegistryRecord> = new Map();
+  private health: Map<AccountId, AccountHealthRecord> = new Map();
   
   constructor(private storage: Storage, private config: AppConfig) {}
 
   async load() {
-    const accounts = await this.storage.loadJson<AccountRegistryRecord[]>('registry.json');
-    if (accounts) this.accounts = accounts;
+    const accountsList = await this.storage.loadJson<AccountRegistryRecord[]>('registry.json');
+    if (accountsList) {
+      this.accounts = new Map(accountsList.map(a => [a.id, a]));
+    }
 
-    const health = await this.storage.loadJson<Record<AccountId, AccountHealthRecord>>('health.json');
-    if (health) this.health = health;
+    const healthObj = await this.storage.loadJson<Record<AccountId, AccountHealthRecord>>('health.json');
+    if (healthObj) {
+      this.health = new Map(Object.entries(healthObj));
+    }
     
     // Ensure all accounts have health records
-    for (const acc of this.accounts) {
-      if (!this.health[acc.id]) {
-        this.health[acc.id] = this.createDefaultHealth(acc.id);
+    for (const acc of this.accounts.values()) {
+      if (!this.health.has(acc.id)) {
+        this.health.set(acc.id, this.createDefaultHealth(acc.id));
       }
     }
   }
@@ -57,30 +62,43 @@ export class Registry {
   }
 
   async save() {
-    await this.storage.saveJson('registry.json', this.accounts);
-    await this.storage.saveJson('health.json', this.health);
+    await this.storage.saveJson('registry.json', Array.from(this.accounts.values()));
+    await this.storage.saveJson('health.json', Object.fromEntries(this.health));
   }
 
-  getAccount(id: AccountId) {
-    return this.accounts.find(a => a.id === id);
+  getAccount(id: AccountId): AccountRegistryRecord | undefined {
+    return this.accounts.get(id);
   }
 
-  getAllAccounts() {
-    return this.accounts;
+  getAllAccounts(): AccountRegistryRecord[] {
+    return Array.from(this.accounts.values());
   }
 
-  getHealth(id: AccountId) {
-    return this.health[id];
+  getHealth(id: AccountId): AccountHealthRecord | undefined {
+    return this.health.get(id);
   }
 
-  async importAccount(record: Omit<AccountRegistryRecord, 'fingerprint' | 'id'>) {
-    const id = record.alias.toLowerCase().replace(/\s+/g, '-');
-    const fingerprint = `fp_${id}_${Date.now()}`; // Deterministic but unique fingerprint
+  getHealthMap(): Record<AccountId, AccountHealthRecord> {
+    return Object.fromEntries(this.health);
+  }
 
-    const existing = this.accounts.find(a => a.id === id || a.fingerprint === fingerprint);
-    if (existing) {
-      logger.log('Account already exists, skipping import', { alias: record.alias });
-      return existing;
+  async importAccount(record: Omit<AccountRegistryRecord, 'fingerprint' | 'id'>): Promise<AccountRegistryRecord> {
+    const id = record.alias.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const fingerprint = `fp_${Buffer.from(record.sourcePath).toString('base64').slice(0, 16)}`;
+
+    // Check for dedupe by fingerprint first (primary key), then by id
+    for (const acc of this.accounts.values()) {
+      if (acc.fingerprint === fingerprint) {
+        logger.log('Account import deduped by fingerprint', { existingId: acc.id, alias: record.alias });
+        return acc;
+      }
+    }
+
+    // Check if id already exists (different source path but same alias slug)
+    const existingById = this.accounts.get(id);
+    if (existingById) {
+      logger.log('Account import deduped by id', { existingId: id, alias: record.alias });
+      return existingById;
     }
 
     const newRecord: AccountRegistryRecord = {
@@ -89,8 +107,8 @@ export class Registry {
       fingerprint,
     };
 
-    this.accounts.push(newRecord);
-    this.health[id] = this.createDefaultHealth(id);
+    this.accounts.set(id, newRecord);
+    this.health.set(id, this.createDefaultHealth(id));
 
     await this.save();
     logger.log('Account imported', { id, alias: record.alias, priority: record.priority });
@@ -98,13 +116,14 @@ export class Registry {
   }
 
   updateHealth(id: AccountId, updates: Partial<AccountHealthRecord>) {
-    if (!this.health[id]) {
-      this.health[id] = this.createDefaultHealth(id);
+    if (!this.health.has(id)) {
+      this.health.set(id, this.createDefaultHealth(id));
     }
-    const oldState = this.health[id].state;
+    const current = this.health.get(id)!;
+    const oldState = current.state;
     const newState = updates.state ?? oldState;
     
-    this.health[id] = { ...this.health[id], ...updates };
+    this.health.set(id, { ...current, ...updates });
     
     // Log state transitions
     if (oldState !== newState) {
@@ -116,6 +135,7 @@ export class Registry {
     const acc = this.getAccount(id);
     if (acc) {
       acc.disabled = disabled;
+      this.accounts.set(id, acc);
       await this.save();
       logger.log('Account disabled toggled', { id, disabled });
     }
@@ -132,6 +152,47 @@ export class Registry {
       cooldownUntil: null, 
       suspendedReason: null,
       recoveryAttempts: 0,
+    });
+    await this.save();
+  }
+
+  async deleteAccount(id: AccountId): Promise<boolean> {
+    const deleted = this.accounts.delete(id);
+    this.health.delete(id);
+    if (deleted) {
+      await this.save();
+      logger.log('Account deleted', { id });
+    }
+    return deleted;
+  }
+
+  async rebuildFromDisk(inboxDir: string) {
+    // In a real implementation, this would scan the inbox directory
+    // For now, we just log the action
+    logger.log('Registry rebuild requested', { inboxDir });
+  }
+
+  async recordFailure(id: AccountId, kind: FailureKind) {
+    const health = this.health.get(id);
+    if (!health) return;
+    
+    const newFailures = health.consecutiveFailures + 1;
+    this.updateHealth(id, {
+      lastFailureAt: new Date().toISOString(),
+      lastFailureKind: kind,
+      consecutiveFailures: newFailures,
+    });
+    await this.save();
+  }
+
+  async recordSuccess(id: AccountId) {
+    const health = this.health.get(id);
+    if (!health) return;
+    
+    this.updateHealth(id, {
+      lastSuccessAt: new Date().toISOString(),
+      consecutiveFailures: 0,
+      lastFailureKind: null,
     });
     await this.save();
   }

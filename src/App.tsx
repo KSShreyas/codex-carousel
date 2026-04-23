@@ -61,10 +61,16 @@ export default function App() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<{ id: string; msg: string; time: string; type: string }[]>([]);
+  const [logs, setLogs] = useState<{ timestamp: string; event: string; [key: string]: any }[]>([]);
 
-  const addLog = (msg: string, type: string = 'info') => {
-    setLogs(prev => [{ id: Math.random().toString(), msg, time: new Date().toLocaleTimeString(), type }, ...prev].slice(0, 50));
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch('/api/logs?limit=50');
+      const logData = await res.json();
+      setLogs(logData);
+    } catch (err) {
+      // Silently fail - logs are secondary
+    }
   };
 
   const fetchData = async () => {
@@ -73,6 +79,8 @@ export default function App() {
       const json = await res.json();
       setData(json);
       setLoading(false);
+      // Also fetch real backend logs
+      await fetchLogs();
     } catch (err) {
       setError('Failed to connect to supervisor');
     }
@@ -85,21 +93,41 @@ export default function App() {
   }, []);
 
   const handleManualSwitch = async () => {
-    addLog('Requesting manual account rotation...', 'warn');
-    await fetch('/api/switch', { method: 'POST' });
-    addLog('Rotation sequence initiated', 'success');
+    const res = await fetch('/api/rotate', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      console.log('Rotation successful:', data.selectedId);
+    } else {
+      const err = await res.json();
+      console.error('Rotation failed:', err.error);
+    }
+    // Refresh data to show updated state
+    setTimeout(fetchData, 500);
   };
 
   const handleImport = async () => {
     const alias = prompt('Enter Account Alias:');
     if (!alias) return;
-    addLog(`Importing account: ${alias}...`);
-    const res = await fetch('/api/import', {
+    const priorityStr = prompt('Enter Priority (default: 1):') || '1';
+    const sourcePath = prompt('Enter Source Path (optional):') || undefined;
+    
+    const res = await fetch('/api/accounts/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alias })
+      body: JSON.stringify({ 
+        alias, 
+        priority: parseInt(priorityStr),
+        sourcePath 
+      })
     });
-    if (res.ok) fetchData();
+    if (res.ok) {
+      const data = await res.json();
+      console.log('Imported:', data.id);
+      fetchData();
+    } else {
+      const err = await res.json();
+      console.error('Import failed:', err.error);
+    }
   };
 
   const activeAccount = data?.accounts.find(a => a.id === data.runtime.activeAccountId);
@@ -260,19 +288,19 @@ export default function App() {
           <div className="h-48 bg-[#141414] border border-[#333] p-4 flex flex-col">
             <h2 className="text-[11px] uppercase tracking-[0.2em] text-[#888] mb-3 font-bold">System Events Log</h2>
             <div className="overflow-y-auto flex-grow font-mono text-[11px] space-y-1 custom-scrollbar">
-              {logs.map(log => (
-                <div key={log.id} className="flex gap-4 opacity-70">
-                  <span className="text-[#666] shrink-0">[{log.time}]</span>
+              {logs.map((log, idx) => (
+                <div key={`${log.timestamp}-${idx}`} className="flex gap-4 opacity-70">
+                  <span className="text-[#666] shrink-0">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                   <span className={cn(
                     "uppercase",
-                    log.type === 'success' ? 'text-[#00FF41]' : 
-                    log.type === 'warn' ? 'text-[#FF9900]' : 
-                    log.type === 'error' ? 'text-[#FF4444]' : 'text-[#888]'
-                  )}>{log.type}:</span>
-                  <span className="text-[#999] truncate">{log.msg}</span>
+                    log.event?.includes('ERROR') ? 'text-[#FF4444]' : 
+                    log.event?.includes('failed') || log.event?.includes('warning') ? 'text-[#FF9900]' : 
+                    'text-[#888]'
+                  )}>{log.event}:</span>
+                  <span className="text-[#999] truncate">{JSON.stringify(log).slice(50, 150)}...</span>
                 </div>
               ))}
-              {logs.length === 0 && <div className="text-[#333] italic lowercase">Waiting for system telemetry...</div>}
+              {logs.length === 0 && <div className="text-[#333] italic lowercase">Waiting for backend events...</div>}
             </div>
           </div>
         </section>

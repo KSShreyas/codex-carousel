@@ -3,88 +3,178 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { 
-  AccountId, 
-  AccountState, 
-  SwitchReason, 
-  AppConfig, 
-  RuntimeState, 
-  BridgeEvent 
-} from './types';
+import { AccountId, AccountState, SwitchReason, AppConfig, RuntimeState } from './types';
 import { Registry } from './registry';
 import { Arbiter } from './arbiter';
 import { Ledger } from './ledger';
-import { Monitor } from './monitor';
 import { logger } from './logging';
 import { StateMachine } from './stateMachine';
+import { RuntimeStore } from './runtime';
 
+/**
+ * Bridge Adapter Interface
+ * Production implementations must implement all methods.
+ * Dev/Test implementations may use deterministic mocks.
+ */
 export interface IBridgeAdapter {
+  /** Wait for session to be idle before switching */
   isIdle(): Promise<boolean>;
+  
+  /** Execute auth file switch */
   switchAuth(nextPath: string): Promise<void>;
+  
+  /** Verify the new identity is actually active */
   verifyIdentity(expectedId: string): Promise<boolean>;
+  
+  /** Reload session state after switch */
   reloadSession(): Promise<void>;
+  
+  /** Dispatch resume command to continue work */
+  dispatchResume(payload: any): Promise<void>;
+}
+
+/**
+ * Development/Test Adapter
+ * Uses deterministic mocks for testing and development.
+ * NOT suitable for production use.
+ */
+export class DevTestAdapter implements IBridgeAdapter {
+  async isIdle(): Promise<boolean> {
+    // In dev/test, always assume idle after brief delay
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return true;
+  }
+
+  async switchAuth(nextPath: string): Promise<void> {
+    logger.log('DevAdapter: Auth switch executed', { path: nextPath });
+    // Simulate switch delay
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  async verifyIdentity(expectedId: string): Promise<boolean> {
+    logger.log('DevAdapter: Identity verified', { expectedId });
+    return true;
+  }
+
+  async reloadSession(): Promise<void> {
+    logger.log('DevAdapter: Session reloaded');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  async dispatchResume(payload: any): Promise<void> {
+    logger.log('DevAdapter: Resume dispatched', { payload });
+  }
+}
+
+/**
+ * Production Adapter Stub
+ * This is a placeholder for real Codex integration.
+ * In production, this would integrate with actual Codex auth system.
+ * 
+ * TODO: Implement real production adapters when live integration is available:
+ * - Real idle detection via editor/process monitoring
+ * - Real auth file switching via secure credential manager
+ * - Real identity verification via Codex API
+ * - Real session reload via Codex client
+ * - Real resume dispatch via Codex command interface
+ */
+export class ProductionAdapterStub implements IBridgeAdapter {
+  constructor() {
+    logger.log('ProductionAdapterStub initialized - DEV MODE ONLY');
+    logger.warn('Production adapter not implemented - using stub');
+  }
+
+  async isIdle(): Promise<boolean> {
+    // STUB: In production, this would check actual editor/process activity
+    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+  }
+
+  async switchAuth(nextPath: string): Promise<void> {
+    // STUB: In production, this would securely switch auth credentials
+    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+  }
+
+  async verifyIdentity(expectedId: string): Promise<boolean> {
+    // STUB: In production, this would verify via Codex API
+    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+  }
+
+  async reloadSession(): Promise<void> {
+    // STUB: In production, this would reload Codex session
+    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+  }
+
+  async dispatchResume(payload: any): Promise<void> {
+    // STUB: In production, this would dispatch resume command
+    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+  }
 }
 
 export class Bridge {
-  private runtime: RuntimeState = {
-    activeAccountId: null,
-    drainingAccountId: null,
-    uptimeStart: new Date().toISOString(),
-    lastSwitchAt: null,
-    sessionStatus: 'idle',
-  };
-
   private adapter: IBridgeAdapter;
 
   constructor(
     private registry: Registry,
     private arbiter: Arbiter,
     private ledger: Ledger,
-    private config: AppConfig
+    private runtimeStore: RuntimeStore,
+    private config: AppConfig,
+    adapter?: IBridgeAdapter
   ) {
-    // Default Mock Adapter
-    this.adapter = {
-      isIdle: async () => true, // Simulation
-      switchAuth: async (path) => logger.log('Adapter: Switched auth file', { path }),
-      verifyIdentity: async (id) => true,
-      reloadSession: async () => logger.log('Adapter: Reloaded session'),
-    };
+    // Use provided adapter or default to DevTestAdapter for development
+    // Production deployments must explicitly provide a production adapter
+    this.adapter = adapter ?? new DevTestAdapter();
+    logger.log('Bridge initialized', { adapterType: adapter?.constructor.name ?? 'DevTestAdapter' });
   }
 
   setAdapter(adapter: IBridgeAdapter) {
     this.adapter = adapter;
+    logger.log('Bridge adapter changed', { adapterType: adapter.constructor.name });
   }
 
-  getRuntime() {
-    return this.runtime;
+  getRuntime(): RuntimeState {
+    return this.runtimeStore.getState();
   }
 
   async initialize() {
     await this.registry.load();
     await this.ledger.load();
+    await this.runtimeStore.load();
     
-    // Recovery from crash: find active account
+    // Recovery from crash: find active account from health store
     const accounts = this.registry.getAllAccounts();
-    const active = accounts.find(a => this.registry.getHealth(a.id).state === AccountState.Active);
+    const active = accounts.find(a => {
+      const health = this.registry.getHealth(a.id);
+      return health?.state === AccountState.Active;
+    });
+    
     if (active) {
-      this.runtime.activeAccountId = active.id;
+      this.runtimeStore.setActiveAccount(active.id);
+      logger.log('Restart recovery: found active account', { id: active.id });
     }
+    
+    // Handle interrupted switch state
+    await this.runtimeStore.onRestart();
+    
+    await this.runtimeStore.save();
   }
 
-  async performSwitch(reason: SwitchReason) {
-    if (this.runtime.sessionStatus === 'switching') {
+  async performSwitch(reason: SwitchReason): Promise<{ success: boolean; selectedId?: string; error?: string }> {
+    const runtime = this.runtimeStore.getState();
+    
+    if (runtime.sessionStatus === 'switching') {
       logger.log('Switch already in progress, ignoring request');
-      return;
+      return { success: false, error: 'Switch already in progress' };
     }
 
-    this.runtime.sessionStatus = 'switching';
-    const prevId = this.runtime.activeAccountId;
+    this.runtimeStore.setSessionStatus('switching');
+    const prevId = runtime.activeAccountId;
     
     try {
-      // 1. Selection
+      // 1. Selection using arbiter
       const decision = this.arbiter.selectNext(
         this.registry.getAllAccounts(), 
-        Object.fromEntries(this.registry.getAllAccounts().map(a => [a.id, this.registry.getHealth(a.id)])),
+        this.registry.getHealthMap(),
         prevId
       );
 
@@ -97,15 +187,19 @@ export class Bridge {
         await new Promise(r => setTimeout(r, 1000));
         attempts++;
       }
-
-      // 3. Draining
-      if (prevId) {
-        this.registry.updateHealth(prevId, { state: AccountState.Draining });
-        this.runtime.drainingAccountId = prevId;
+      
+      if (attempts >= 30) {
+        throw new Error('Timeout waiting for idle state');
       }
 
-      // 4. Checkpoint Ledger
-      await this.ledger.checkpoint({
+      // 3. Mark current account as Draining
+      if (prevId) {
+        this.registry.updateHealth(prevId, { state: AccountState.Draining });
+        this.runtimeStore.setDrainingAccount(prevId);
+      }
+
+      // 4. Checkpoint Ledger BEFORE switch
+      const checkpoint = {
         objective: 'Resuming work after rotation',
         repoPath: process.cwd(),
         branch: 'main',
@@ -119,11 +213,15 @@ export class Bridge {
         switchReason: decision.reason,
         nextStep: 'Verify environment stability',
         resumePayload: {},
-      });
+      };
+      await this.ledger.checkpoint(checkpoint);
+      logger.log('Ledger checkpointed before switch', { checkpointId: checkpoint.activeAccountId });
 
       // 5. Auth Switch
       const nextAcc = this.registry.getAccount(decision.selectedId);
-      if (!nextAcc) throw new Error('Selected account missing');
+      if (!nextAcc) {
+        throw new Error('Selected account not found in registry');
+      }
       await this.adapter.switchAuth(nextAcc.sourcePath);
 
       // 6. Verification
@@ -135,16 +233,24 @@ export class Bridge {
       // 7. Reload Session
       await this.adapter.reloadSession();
 
-      // 8. Dispatch Resume Action
-      logger.log('Dispatching resume signal using ledger context');
-      // In a real env, this would call a Codex API or signal the editor
-      await new Promise(r => setTimeout(r, 500)); 
+      // 8. Dispatch Resume using ledger payload
+      const ledgerCurrent = this.ledger.getCurrent();
+      if (ledgerCurrent) {
+        logger.log('Dispatching resume with ledger payload', { checkpointId: ledgerCurrent.id });
+        await this.adapter.dispatchResume(ledgerCurrent.resumePayload);
+      } else {
+        logger.log('No ledger checkpoint available for resume');
+      }
 
-      // 9. Active update
-      this.runtime.activeAccountId = decision.selectedId;
-      this.registry.updateHealth(decision.selectedId, { state: AccountState.Active });
+      // 9. Update Active account
+      this.runtimeStore.setPreviousAccount(prevId);
+      this.runtimeStore.setActiveAccount(decision.selectedId);
+      this.registry.updateHealth(decision.selectedId, { 
+        state: AccountState.Active,
+        lastSwitchInAt: new Date().toISOString(),
+      });
 
-      // 10. Cleanup prev
+      // 10. Move previous account to CoolingDown
       if (prevId) {
         const cooldownMinutes = decision.isHard 
           ? this.config.cooldownDurationMinutes 
@@ -155,23 +261,36 @@ export class Bridge {
         this.registry.updateHealth(prevId, { 
           state: AccountState.CoolingDown, 
           cooldownUntil,
+          lastSwitchOutAt: new Date().toISOString(),
         });
-        this.runtime.drainingAccountId = null;
+        this.runtimeStore.setDrainingAccount(null);
       }
 
-      this.runtime.lastSwitchAt = new Date().toISOString();
-      this.runtime.sessionStatus = 'idle';
+      this.runtimeStore.setLastSwitchAt(new Date().toISOString());
+      this.runtimeStore.setSessionStatus('idle');
       
       logger.log('Switch successful', { id: decision.selectedId });
       await this.registry.save();
+      await this.runtimeStore.save();
+      
+      return { success: true, selectedId: decision.selectedId };
     } catch (error) {
-      this.runtime.sessionStatus = 'idle';
-      logger.error('Switch sequence aborted', error);
-      // Attempt rollback health state if possible
+      this.runtimeStore.setSessionStatus('idle');
+      logger.error('Switch sequence failed', error);
+      
+      // Attempt rollback: restore previous account to Active if it was draining
       if (prevId) {
         this.registry.updateHealth(prevId, { state: AccountState.Active });
+        this.runtimeStore.setDrainingAccount(null);
       }
-      throw error;
+      
+      await this.registry.save();
+      await this.runtimeStore.save();
+      
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error) 
+      };
     }
   }
 }
