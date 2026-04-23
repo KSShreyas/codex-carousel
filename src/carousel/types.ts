@@ -76,6 +76,14 @@ export interface RuntimeState {
   uptimeStart: string;
   lastSwitchAt: string | null;
   sessionStatus: 'idle' | 'busy' | 'switching';
+  pendingSwitch?: PendingSwitchRequest;
+}
+
+export interface PendingSwitchRequest {
+  fromAccountId: AccountId | null;
+  toAccountId: AccountId;
+  reason: SwitchReason;
+  requestedAt: string;
 }
 
 export interface LedgerCheckpoint {
@@ -96,6 +104,26 @@ export interface LedgerCheckpoint {
   resumePayload: any;
 }
 
+export interface RecoveryStatus {
+  accountId: AccountId;
+  probedAt: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface PolicyConfig {
+  stickyPrimary: boolean;
+  fiveHourThreshold: number;
+  weeklyThreshold: number;
+  cooldownDurationMinutes: number;
+  rateLimitCooldownMinutes: number;
+  recoveryProbeIntervalMinutes: number;
+  maxConsecutiveFailures: number;
+  fairRotation: boolean;
+  recentUsePenalty: number;
+  failurePenalty: number;
+}
+
 export interface AppConfig {
   stateDir: string;
   logDir: string;
@@ -113,6 +141,7 @@ export interface AppConfig {
   failurePenalty: number;
   uiRefreshIntervalMs: number;
   bridgeReloadTimeoutMs: number;
+  ledgerRetentionCount: number;
 }
 
 export interface SelectionDecision {
