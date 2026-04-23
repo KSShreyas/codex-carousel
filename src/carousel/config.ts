@@ -17,6 +17,7 @@ export const ConfigSchema = z.object({
   weeklyThreshold: z.number().default(20),
   cooldownDurationMinutes: z.number().default(300), // 5 hours default
   rateLimitCooldownMinutes: z.number().default(60),
+  authFailureCooldownMinutes: z.number().default(120),
   recoveryProbeIntervalMinutes: z.number().default(15),
   maxConsecutiveFailures: z.number().default(3),
   fairRotation: z.boolean().default(true),
