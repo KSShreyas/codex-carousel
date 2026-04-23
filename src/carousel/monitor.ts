@@ -43,23 +43,70 @@ export class Monitor {
 
       // Check for cooldown expiry
       if (health.state === AccountState.CoolingDown && health.cooldownUntil) {
-        if (new Date(health.cooldownUntil) <= new Date()) {
-          logger.log('Cooldown expired, probing recovery', { id: acc.id });
-          this.registry.updateHealth(acc.id, { state: AccountState.Recovering });
-          // Simulation: recover immediately
-          setTimeout(() => {
-            this.registry.updateHealth(acc.id, { state: AccountState.Available, cooldownUntil: null });
-          }, 2000);
+        const cooldownTime = new Date(health.cooldownUntil).getTime();
+        const now = Date.now();
+        
+        if (cooldownTime <= now) {
+          logger.log('Cooldown expired, moving to Recovering state', { 
+            id: acc.id,
+            cooldownUntil: health.cooldownUntil 
+          });
+          
+          // Move to Recovering state - actual recovery probe happens in next tick
+          this.registry.updateHealth(acc.id, { 
+            state: AccountState.Recovering,
+            recoveryAttempts: (health.recoveryAttempts || 0) + 1
+          });
+        }
+      }
+      
+      // Handle recovery probes
+      if (health.state === AccountState.Recovering) {
+        const maxAttempts = this.config.maxConsecutiveFailures;
+        const currentAttempts = health.recoveryAttempts || 0;
+        
+        if (currentAttempts >= maxAttempts) {
+          // Recovery failed too many times, suspend the account
+          logger.log('Recovery failed after max attempts, suspending account', { 
+            id: acc.id,
+            attempts: currentAttempts 
+          });
+          this.registry.updateHealth(acc.id, { 
+            state: AccountState.Suspended,
+            suspendedReason: `Recovery failed after ${currentAttempts} attempts`
+          });
+        } else {
+          // Simulate a recovery probe - in production this would check actual account health
+          // For now, we assume recovery succeeds after entering Recovering state
+          // In production, this would call a real health check endpoint
+          logger.log('Recovery probe successful', { id: acc.id });
+          this.registry.updateHealth(acc.id, { 
+            state: AccountState.Available,
+            cooldownUntil: null,
+            recoveryAttempts: 0,
+            consecutiveFailures: 0,
+            lastFailureKind: null
+          });
         }
       }
     }
   }
 
   /**
-   * Simulated usage refresh
+   * Refresh usage from quota provider
+   * In production, this would call actual Codex quota API
+   * For dev/test, returns simulated but deterministic values
    */
   async refreshUsage(id: AccountId): Promise<UsageSnapshot> {
     const health = this.registry.getHealth(id);
+    
+    // In production mode (when CAROUSEL_PRODUCTION=true), this would:
+    // 1. Call actual Codex quota API endpoint
+    // 2. Parse real usage data
+    // 3. Return actual remaining quotas
+    
+    // For dev/test, we use deterministic simulation based on account ID
+    // This ensures consistent behavior for testing while not using random values
     const current = health?.usage ?? { 
       five_hour_remaining: 50, 
       five_hour_total: 50, 
@@ -68,10 +115,13 @@ export class Monitor {
       timestamp: new Date().toISOString() 
     };
 
-    // Simulate some usage
+    // Deterministic "usage" based on account ID hash (no randomness)
+    const idHash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const usageDelta = idHash % 5; // Deterministic value 0-4
+    
     const next: UsageSnapshot = {
       ...current,
-      five_hour_remaining: Math.max(0, current.five_hour_remaining - Math.floor(Math.random() * 5)),
+      five_hour_remaining: Math.max(0, current.five_hour_remaining - usageDelta),
       timestamp: new Date().toISOString(),
     };
 

@@ -83,8 +83,16 @@ export class Registry {
   }
 
   async importAccount(record: Omit<AccountRegistryRecord, 'fingerprint' | 'id'>): Promise<AccountRegistryRecord> {
+    // Validate source path - must be provided in production mode
+    if (!record.sourcePath && process.env.CAROUSEL_PRODUCTION === 'true') {
+      throw new Error('Source path is required for account import in production mode');
+    }
+    
+    // In dev mode, generate a source path if not provided (for testing convenience)
+    const effectiveSourcePath = record.sourcePath || `./dev-auth-${Date.now()}.json`;
+    
     const id = record.alias.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    const fingerprint = `fp_${Buffer.from(record.sourcePath).toString('base64').slice(0, 16)}`;
+    const fingerprint = `fp_${Buffer.from(effectiveSourcePath).toString('base64').slice(0, 16)}`;
 
     // Check for dedupe by fingerprint first (primary key), then by id
     for (const acc of this.accounts.values()) {
@@ -105,13 +113,14 @@ export class Registry {
       ...record,
       id,
       fingerprint,
+      sourcePath: effectiveSourcePath,
     };
 
     this.accounts.set(id, newRecord);
     this.health.set(id, this.createDefaultHealth(id));
 
     await this.save();
-    logger.log('Account imported', { id, alias: record.alias, priority: record.priority });
+    logger.log('Account imported', { id, alias: record.alias, priority: record.priority, sourcePath: effectiveSourcePath });
     return newRecord;
   }
 
@@ -167,9 +176,60 @@ export class Registry {
   }
 
   async rebuildFromDisk(inboxDir: string) {
-    // In a real implementation, this would scan the inbox directory
-    // For now, we just log the action
-    logger.log('Registry rebuild requested', { inboxDir });
+    logger.log('Registry rebuild started', { inboxDir });
+    
+    try {
+      // List all JSON files in the inbox directory
+      const files = await this.storage.listFiles(inboxDir);
+      const authFiles = files.filter(f => f.endsWith('.json'));
+      
+      let importedCount = 0;
+      let dedupedCount = 0;
+      
+      for (const file of authFiles) {
+        const sourcePath = `${inboxDir}/${file}`;
+        const alias = file.replace('.json', '');
+        
+        // Try to import - will dedupe automatically
+        const existingBySource = Array.from(this.accounts.values()).find(
+          acc => acc.sourcePath === sourcePath
+        );
+        
+        if (existingBySource) {
+          dedupedCount++;
+          logger.log('Rebuild skipped existing account', { 
+            alias, 
+            id: existingBySource.id 
+          });
+          continue;
+        }
+        
+        try {
+          await this.importAccount({
+            alias,
+            priority: 1,
+            sourcePath,
+            disabled: false,
+            metadata: {}
+          });
+          importedCount++;
+        } catch (err) {
+          logger.error('Rebuild failed to import file', err, { file });
+        }
+      }
+      
+      logger.log('Registry rebuild completed', { 
+        inboxDir, 
+        importedCount, 
+        dedupedCount,
+        totalFiles: authFiles.length 
+      });
+      
+      return { importedCount, dedupedCount, totalFiles: authFiles.length };
+    } catch (err) {
+      logger.error('Registry rebuild failed', err);
+      throw err;
+    }
   }
 
   async recordFailure(id: AccountId, kind: FailureKind) {

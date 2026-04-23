@@ -124,6 +124,12 @@ async function startServer() {
     if (!alias) {
       return res.status(400).json({ error: 'Alias is required' });
     }
+    
+    // In production mode, require explicit source path
+    if (!sourcePath && process.env.CAROUSEL_PRODUCTION === 'true') {
+      return res.status(400).json({ error: 'Source path is required in production mode' });
+    }
+    
     try {
       const acc = await registry.importAccount({
         alias,
@@ -132,7 +138,7 @@ async function startServer() {
         disabled: false,
         metadata: {}
       });
-      logger.log('API: Account imported', { id: acc.id, alias: acc.alias });
+      logger.log('API: Account imported', { id: acc.id, alias: acc.alias, sourcePath: acc.sourcePath });
       res.json(acc);
     } catch (err) {
       logger.error('API: Import failed', err);
