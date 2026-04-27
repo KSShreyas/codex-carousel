@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 
-describe('Switch behavior is explicit/manual only', () => {
+describe('Phase 5 switch API/CLI/UI wiring', () => {
   const server = fs.readFileSync('server.ts', 'utf-8');
+  const cli = fs.readFileSync('cli.ts', 'utf-8');
+  const app = fs.readFileSync('src/App.tsx', 'utf-8');
 
-  it('requires explicit targetProfileId for manual switch', () => {
-    expect(server).toContain('targetProfileId is required and must exist');
+  it('implements capture-current and real switch APIs', () => {
+    expect(server).toContain('/api/profiles/capture-current');
+    expect(server).toContain("app.post('/api/profiles/:id/switch'");
+    expect(server).toContain('executeSwitch');
   });
 
-  it('switch endpoint is pointer-update only in phase 2', () => {
-    expect(server).toContain('realFileSwitching: false');
+  it('requires confirmation for real switch pathways', () => {
+    expect(server).toContain('confirm = req.body?.confirm === true');
+    expect(cli).toContain("requiredOption('--confirm'");
+    expect(app).toContain('Confirm real switch');
   });
 
-  it('no automatic switch execution path exists in monitor callback wiring', () => {
-    expect(server).not.toContain('performSwitch(reason)');
+  it('includes launch API and CLI command', () => {
+    expect(server).toContain('/api/codex/launch');
+    expect(cli).toContain("program.command('launch')");
+    expect(app).toContain('Launch Codex');
   });
 });

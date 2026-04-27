@@ -22,7 +22,14 @@ export interface DurableState {
   usageSnapshots: ProfileUsageSnapshot[];
   switchEvents: SwitchEvent[];
   settings: AppSettingsV2;
-  profileSnapshotMetadata: Record<string, { snapshotPath: string | null; snapshotStatus: SnapshotStatus; updatedAt: string }>;
+  profileSnapshotMetadata: Record<string, {
+    snapshotPath: string | null;
+    snapshotStatus: SnapshotStatus;
+    updatedAt: string;
+    fileCount?: number;
+    manifestPath?: string | null;
+    checksums?: Array<{ relativePath: string; sha256: string; size: number }>;
+  }>;
 }
 
 export class DurableStore {
@@ -54,6 +61,13 @@ export class DurableStore {
         schemaVersion: SCHEMA_VERSION,
         activeProfileId: null,
         demoMode: false,
+        localSwitchingEnabled: false,
+        codexProfileRootPath: null,
+        codexLaunchCommand: null,
+        requireCodexClosedBeforeSwitch: true,
+        allowProcessStop: false,
+        autoLaunchAfterSwitch: false,
+        redactSensitivePathsInLogs: true,
       },
       profileSnapshotMetadata: {},
     };
@@ -72,6 +86,13 @@ export class DurableStore {
   private migrate(state: DurableState) {
     state.schemaVersion = SCHEMA_VERSION;
     state.settings.schemaVersion = SCHEMA_VERSION;
+    state.settings.localSwitchingEnabled ??= false;
+    state.settings.codexProfileRootPath ??= null;
+    state.settings.codexLaunchCommand ??= null;
+    state.settings.requireCodexClosedBeforeSwitch ??= true;
+    state.settings.allowProcessStop ??= false;
+    state.settings.autoLaunchAfterSwitch ??= false;
+    state.settings.redactSensitivePathsInLogs ??= true;
   }
 
   private async readStateWithRecovery(): Promise<DurableState | null> {
@@ -276,6 +297,28 @@ export class DurableStore {
       }
     }
     await this.save();
+  }
+
+
+  getSnapshotMetadata(profileId: string) {
+    const item = this.state.profileSnapshotMetadata[profileId];
+    return item ? structuredClone(item) : null;
+  }
+
+  async upsertSnapshotMetadata(profileId: string, metadata: {
+    snapshotPath: string | null;
+    snapshotStatus: SnapshotStatus;
+    fileCount?: number;
+    manifestPath?: string | null;
+    checksums?: Array<{ relativePath: string; sha256: string; size: number }>;
+  }) {
+    this.state.profileSnapshotMetadata[profileId] = {
+      ...this.state.profileSnapshotMetadata[profileId],
+      ...metadata,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.save();
+    return this.getSnapshotMetadata(profileId);
   }
 
   getSettings() {

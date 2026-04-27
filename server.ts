@@ -12,6 +12,7 @@ import { logger } from './src/carousel/logging';
 import { DurableStore } from './src/carousel/durableStore';
 import { persistRecommendations, recomputeRecommendations } from './src/carousel/recommendations';
 import { LimitStatus, ProfilePlan, SnapshotStatus, SwitchEventType, UsageSnapshotSource, VerificationStatus } from './src/carousel/types';
+import { SwitchEngine } from './src/carousel/switchEngine';
 
 function parsePlan(input: any): ProfilePlan {
   return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
@@ -23,6 +24,11 @@ function parseLimit(input: any): LimitStatus {
 
 function parseUsageSource(input: any): UsageSnapshotSource {
   return Object.values(UsageSnapshotSource).includes(input) ? input : UsageSnapshotSource.Unknown;
+}
+
+function parseBoolean(input: any, fallback: boolean): boolean {
+  if (typeof input === 'boolean') return input;
+  return fallback;
 }
 
 async function startServer() {
@@ -37,6 +43,7 @@ async function startServer() {
   const store = new DurableStore(config.stateDir);
   await store.load();
   await store.patchSettings({ demoMode: config.demoMode });
+  const switchEngine = new SwitchEngine(store, config.stateDir);
 
   // Demo mode seeding is explicit and disabled by default.
   if (config.demoMode && store.getState().profiles.length === 0) {
@@ -47,10 +54,12 @@ async function startServer() {
     const state = store.getState();
     const activeProfile = state.settings.activeProfileId ? state.profiles.find((p) => p.id === state.settings.activeProfileId) ?? null : null;
     const recommendations = recomputeRecommendations(store);
+    const switchStatus = await switchEngine.getSwitchStatus();
     return {
       runtime: {
         activeProfileId: state.settings.activeProfileId,
       },
+      switchStatus,
       activeProfile,
       profiles: state.profiles,
       recommendations,
@@ -178,7 +187,16 @@ async function startServer() {
   });
 
   app.patch('/api/settings', async (req, res) => {
-    const patched = await store.patchSettings(req.body);
+    const current = store.getSettings();
+    const payload = {
+      ...req.body,
+      localSwitchingEnabled: parseBoolean(req.body?.localSwitchingEnabled, current.localSwitchingEnabled),
+      requireCodexClosedBeforeSwitch: parseBoolean(req.body?.requireCodexClosedBeforeSwitch, current.requireCodexClosedBeforeSwitch),
+      allowProcessStop: parseBoolean(req.body?.allowProcessStop, current.allowProcessStop),
+      autoLaunchAfterSwitch: parseBoolean(req.body?.autoLaunchAfterSwitch, current.autoLaunchAfterSwitch),
+      redactSensitivePathsInLogs: parseBoolean(req.body?.redactSensitivePathsInLogs, current.redactSensitivePathsInLogs),
+    };
+    const patched = await store.patchSettings(payload);
     res.json(patched);
   });
 
@@ -233,6 +251,12 @@ async function startServer() {
         issues.push('Unfinished switch operation detected without recovery status');
       }
 
+      const lockIssue = await switchEngine.getDoctorLockIssue();
+      if (lockIssue) issues.push(lockIssue);
+
+      const launchIssue = await switchEngine.getDoctorLaunchIssue();
+      if (launchIssue) issues.push(launchIssue);
+
       res.json({
         status: issues.length === 0 ? 'healthy' : 'degraded',
         issues,
@@ -265,32 +289,100 @@ async function startServer() {
     res.status(201).json(created);
   });
 
-  // Manual-only switch: pointer update + ledger event only.
-  app.post('/api/switch', async (req, res) => {
-    const { targetProfileId } = req.body;
-    const target = targetProfileId ? store.getProfile(targetProfileId) : null;
-    if (!target) return res.status(400).json({ error: 'targetProfileId is required and must exist' });
 
-    const current = store.getSettings().activeProfileId;
-    store.appendEvent({
-      eventType: SwitchEventType.SWITCH_STARTED,
-      profileId: current,
-      targetProfileId,
-      severity: 'info',
-      message: 'Manual switch started (pointer update only)',
-      metadata: { phase: 2, realFileSwitching: false },
-    });
-    await store.setActiveProfile(targetProfileId);
-    store.appendEvent({
-      eventType: SwitchEventType.SWITCH_COMPLETED,
-      profileId: current,
-      targetProfileId,
-      severity: 'info',
-      message: 'Manual switch completed (pointer update only)',
-      metadata: { phase: 2, realFileSwitching: false },
-    });
-    await store.save();
-    res.json({ success: true, activeProfileId: targetProfileId });
+
+  app.post('/api/profiles/capture-current', async (req, res) => {
+    const alias = req.body?.alias;
+    const plan = parsePlan(req.body?.plan);
+    if (!alias) return res.status(400).json({ error: 'alias is required' });
+
+    try {
+      const result = await switchEngine.captureCurrentProfile({ alias, plan });
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.post('/api/codex/launch', async (_req, res) => {
+    try {
+      const result = await switchEngine.launchCodex();
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.post('/api/profiles/:id/switch/dry-run', async (req, res) => {
+    const targetProfileId = req.params.id;
+    const options = {
+      fixtureRootDir: req.body?.fixtureRootDir ?? null,
+      reason: req.body?.reason ?? 'manual-dry-run',
+    };
+
+    if (options.fixtureRootDir && !String(options.fixtureRootDir).includes('fixture')) {
+      return res.status(400).json({ error: 'fixtureRootDir is only allowed for explicit test fixture directories' });
+    }
+
+    try {
+      const result = await switchEngine.dryRunSwitch(targetProfileId, options);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.get('/api/switch/status', async (_req, res) => {
+    const status = await switchEngine.getSwitchStatus();
+    res.json(status);
+  });
+
+  app.post('/api/switch/lock/clear', async (req, res) => {
+    const confirm = Boolean(req.body?.confirm);
+    try {
+      const result = await switchEngine.clearSwitchLockIfSafe(confirm);
+      if (!result.cleared) {
+        return res.status(409).json({ error: result.reason, ...result });
+      }
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.post('/api/profiles/:id/switch', async (req, res) => {
+    const targetProfileId = req.params.id;
+    const profile = store.getProfile(targetProfileId);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+    const confirm = req.body?.confirm === true;
+    const fixtureRootDir = req.body?.fixtureRootDir ?? null;
+
+    try {
+      const result = await switchEngine.executeSwitch(targetProfileId, { confirm, fixtureRootDir });
+      res.json(result);
+    } catch (error) {
+      const message = String(error);
+      const status = /confirm/i.test(message) ? 400 : 409;
+      res.status(status).json({ error: message, phase: 5 });
+    }
+  });
+
+  // Backward-compatible switch endpoint for CLI interoperability.
+  app.post('/api/switch', async (req, res) => {
+    const targetProfileId = req.body?.targetProfileId;
+    if (!targetProfileId) return res.status(400).json({ error: 'targetProfileId is required' });
+    const profile = store.getProfile(targetProfileId);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+    const confirm = req.body?.confirm === true;
+    const fixtureRootDir = req.body?.fixtureRootDir ?? null;
+    try {
+      const result = await switchEngine.executeSwitch(targetProfileId, { confirm, fixtureRootDir });
+      res.json(result);
+    } catch (error) {
+      res.status(409).json({ error: String(error), phase: 5 });
+    }
   });
 
   if (process.env.NODE_ENV !== 'production') {
