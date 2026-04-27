@@ -12,6 +12,32 @@ export interface LogEntry {
   [key: string]: any;
 }
 
+function sanitizeValue(key: string, value: any): any {
+  const k = key.toLowerCase();
+  if (typeof value === 'string' && (k.includes('token') || k.includes('password') || k.includes('secret'))) {
+    return '[REDACTED]';
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => sanitizeValue(key, v));
+  }
+  if (value && typeof value === 'object') {
+    const next: Record<string, any> = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      next[childKey] = sanitizeValue(childKey, childValue);
+    }
+    return next;
+  }
+  return value;
+}
+
+function sanitizeContext(context: Record<string, any>) {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(context)) {
+    clean[key] = sanitizeValue(key, value);
+  }
+  return clean;
+}
+
 export class Logger {
   private logFile: string | null = null;
   private buffer: LogEntry[] = [];
@@ -34,21 +60,20 @@ export class Logger {
   }
 
   log(event: string, context: Record<string, any> = {}) {
+    const safeContext = sanitizeContext(context);
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       event,
-      ...context,
+      ...safeContext,
     };
     const line = JSON.stringify(entry);
-    console.log(`[CAROUSEL] ${event}`, context);
-    
-    // Buffer for later retrieval
+    console.log(`[CAROUSEL] ${event}`, safeContext);
+
     this.buffer.push(entry);
     if (this.buffer.length > 500) {
       this.buffer.shift();
     }
 
-    // Append to file asynchronously (fire and forget for performance)
     if (this.logFile) {
       fs.appendFile(this.logFile, line + '\n').catch(() => {});
     }
@@ -72,8 +97,8 @@ export class Logger {
     }
     try {
       const content = await fs.readFile(this.logFile, 'utf-8');
-      const lines = content.trim().split('\n').filter(l => l);
-      const entries = lines.map(l => JSON.parse(l) as LogEntry);
+      const lines = content.trim().split('\n').filter((l) => l);
+      const entries = lines.map((l) => JSON.parse(l) as LogEntry);
       return entries.slice(-limit).reverse();
     } catch {
       return this.getRecentEvents(limit);

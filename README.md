@@ -1,51 +1,135 @@
-# Codex Carousel (V1 Scope)
+# Codex Carousel V1.0
 
-Codex Carousel is a **local, manual, explicit Codex Profile switcher** for users with multiple legitimate ChatGPT-login Codex profiles.
+Codex Carousel is a local-first operator tool for managing multiple **legitimate ChatGPT-login Codex profiles** with explicit, manual switching.
 
-## V1 principles
+## What this app is
 
-- Codex-only (no multi-provider routing).
-- Manual profile switching only.
-- No automatic account/profile cycling.
-- No quota bypassing behavior.
-- No hidden switching.
-- Backend is the source of truth for local state.
+- A backend-owned durable state system for profiles, usage snapshots, settings, and switch ledger.
+- A UI + CLI that both operate on the same backend API truth.
+- A safety-gated switching workflow with dry-run, explicit confirmation, lock handling, and rollback.
 
-## Current status
+## What this app is not
 
-This repository is in a scope-reset phase.
+- Not an automatic quota rotator.
+- Not a limit bypass tool.
+- Not an API-key manager.
+- Not a multi-provider router.
+- Not an identity-forging or fake verification tool.
 
-- ✅ Local backend + CLI + UI exist.
-- ✅ Durable local registry/runtime/ledger persistence exists.
-- ⚠️ Real Windows profile file switching is **not implemented yet**.
-- ⚠️ Production-ready live profile switching is deferred until dry-run + rollback safety are implemented.
+## V1 scope
 
-## Run locally
+- Codex-only workflow.
+- Manual profile capture and manual usage snapshots.
+- Dry-run before real switch.
+- Real switch disabled by default (`localSwitchingEnabled=false`).
+- Verification is honest: `VerifyUnavailable` is used when automated verification is not safely available.
 
-Prerequisites: Node.js 20+
+## Install
 
 ```bash
 npm install
+```
+
+## Run backend
+
+```bash
 npm run dev
 ```
 
-Server starts on `http://localhost:3000` and serves both API and UI.
+Backend default: `http://127.0.0.1:3000`.
 
-## Useful commands
+## Run frontend
 
-```bash
-npm run lint
-npm test
-```
+The Vite frontend is served by the same dev server at `http://127.0.0.1:3000`.
 
-## Demo mode
-
-Demo mode is **off by default**.
-
-Set:
+## CLI usage
 
 ```bash
-CAROUSEL_DEMO_MODE=true
+npx tsx cli.ts status
+npx tsx cli.ts profiles list
+npx tsx cli.ts doctor
 ```
 
-Only then may demo profile data be seeded.
+## Profile capture
+
+```bash
+npx tsx cli.ts profiles capture-current --alias "Profile A" --plan Plus
+```
+
+## Dry-run switch
+
+```bash
+npx tsx cli.ts switch dry-run <profileId>
+```
+
+## Real switch
+
+Requires explicit confirmation and local switching enabled:
+
+```bash
+npx tsx cli.ts switch <profileId> --confirm
+```
+
+## Launch Codex
+
+```bash
+npx tsx cli.ts launch
+```
+
+## Usage snapshots
+
+Use manual snapshot updates from CLI or UI.
+
+```bash
+npx tsx cli.ts usage update <profileId> --five-hour Available --weekly Unknown --credits Unknown --source Manual --notes "manual snapshot"
+```
+
+## Recommendations
+
+Recommendation language is intentionally safe and limited:
+
+- Stay on this profile
+- Usage status low, consider choosing another available profile before starting a large task
+- Current profile appears unavailable based on your manual snapshot
+- Verify this profile before using it
+- No recommendation because usage status is unknown
+
+## Doctor
+
+```bash
+npx tsx cli.ts doctor
+```
+
+Doctor reports storage, lock, active pointer, snapshot path, and launch configuration issues.
+
+## Safety model
+
+See `docs/SAFETY_MODEL.md`.
+
+## Local Windows validation
+
+See `docs/LOCAL_WINDOWS_VALIDATION_CHECKLIST.md`.
+
+## Troubleshooting
+
+See `docs/TROUBLESHOOTING.md`.
+
+## Data storage location
+
+Default local paths:
+
+- `./state/durable-state.json`
+- `./state/durable-state.backup.json`
+- `./state/profile-snapshots/`
+- `./state/rollbacks/`
+- `./logs/carousel.jsonl`
+
+## Sensitive data handling
+
+- Raw auth/session file contents are never sent to frontend.
+- Ledger stores metadata-only switch events.
+- Logger redacts token/password/secret-like fields.
+
+## Release checklist
+
+See `docs/RELEASE_CHECKLIST.md`.

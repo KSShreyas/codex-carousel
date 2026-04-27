@@ -11,6 +11,14 @@ function isCaptured(snapshotStatus: SnapshotStatus) {
   return snapshotStatus === SnapshotStatus.Captured;
 }
 
+const SAFE_TEXT = {
+  stay: 'Stay on this profile',
+  low: 'Usage status low, consider choosing another available profile before starting a large task',
+  unavailable: 'Current profile appears unavailable based on your manual snapshot',
+  verify: 'Verify this profile before using it',
+  unknown: 'No recommendation because usage status is unknown',
+};
+
 export function recomputeRecommendations(store: DurableStore) {
   const state = store.getState();
   const active = state.settings.activeProfileId
@@ -18,18 +26,18 @@ export function recomputeRecommendations(store: DurableStore) {
     : null;
 
   const availableTargets = state.profiles.filter(
-    (p) => p.id !== active?.id && (p.fiveHourStatus === LimitStatus.Available || (p.fiveHourStatus === LimitStatus.Unknown && isCaptured(p.snapshotStatus)))
+    (p) => p.id !== active?.id && (p.fiveHourStatus === LimitStatus.Available || (p.fiveHourStatus === LimitStatus.Unknown && isCaptured(p.snapshotStatus))),
   );
-
-  const allExhausted = state.profiles.length > 0 && state.profiles.every((p) => p.fiveHourStatus === LimitStatus.Exhausted && p.weeklyStatus === LimitStatus.Exhausted);
 
   const updatedProfiles = state.profiles.map((profile) => {
     let recommendation = RecommendationStatus.Unknown;
-    let reason = 'Usage status is unknown.';
+    let reason = SAFE_TEXT.unknown;
 
-    if (profile.fiveHourStatus === LimitStatus.Unknown || profile.weeklyStatus === LimitStatus.Unknown) {
+    const hasUnknownUsage = profile.fiveHourStatus === LimitStatus.Unknown || profile.weeklyStatus === LimitStatus.Unknown;
+
+    if (hasUnknownUsage) {
       recommendation = RecommendationStatus.Unknown;
-      reason = 'Usage status is unknown.';
+      reason = SAFE_TEXT.unknown;
     } else if (
       profile.id === active?.id &&
       profile.fiveHourStatus === LimitStatus.Available &&
@@ -37,26 +45,18 @@ export function recomputeRecommendations(store: DurableStore) {
       profile.verificationStatus !== VerificationStatus.Failed
     ) {
       recommendation = RecommendationStatus.Stay;
-      reason = 'Active profile has available observed status.';
+      reason = SAFE_TEXT.stay;
     } else if (profile.id === active?.id && (profile.fiveHourStatus === LimitStatus.Low || profile.weeklyStatus === LimitStatus.Low)) {
       recommendation = RecommendationStatus.SwitchSoon;
-      reason = 'Active profile observed status is low.';
+      reason = SAFE_TEXT.low;
     } else if (profile.id === active?.id && (profile.fiveHourStatus === LimitStatus.Exhausted || profile.weeklyStatus === LimitStatus.Exhausted)) {
-      if (availableTargets.length > 0) {
-        recommendation = RecommendationStatus.SwitchNow;
-        reason = 'Active profile is exhausted and at least one alternate captured profile is available/unknown.';
-      } else if (allExhausted) {
-        recommendation = RecommendationStatus.Unknown;
-        reason = 'All profiles appear exhausted; wait for reset.';
-      } else {
-        recommendation = RecommendationStatus.Unknown;
-        reason = 'No eligible alternate profile available.';
-      }
+      recommendation = RecommendationStatus.SwitchNow;
+      reason = availableTargets.length > 0 ? SAFE_TEXT.low : SAFE_TEXT.unavailable;
     }
 
     if (profile.id !== active?.id && (profile.verificationStatus === VerificationStatus.Unknown || profile.verificationStatus === VerificationStatus.Unverified)) {
       recommendation = RecommendationStatus.VerifyFirst;
-      reason = 'Target profile should be verified before switching.';
+      reason = SAFE_TEXT.verify;
     }
 
     return {
