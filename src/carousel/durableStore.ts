@@ -36,6 +36,14 @@ export class DurableStore {
     this.state = this.defaultState();
   }
 
+  getStorageFilePath() {
+    return this.filePath;
+  }
+
+  getBackupFilePath() {
+    return this.backupPath;
+  }
+
   private defaultState(): DurableState {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -282,5 +290,24 @@ export class DurableStore {
     };
     await this.save();
     return this.getSettings();
+  }
+
+  getLastEventTimestamp(): string | null {
+    if (this.state.switchEvents.length === 0) return null;
+    return this.state.switchEvents[this.state.switchEvents.length - 1].timestamp;
+  }
+
+  async storageWritable(): Promise<boolean> {
+    const probe = path.join(this.baseDir, `.probe-${crypto.randomUUID()}.tmp`);
+    try {
+      const handle = await fs.open(probe, 'w');
+      await handle.writeFile('ok', 'utf-8');
+      await handle.sync();
+      await handle.close();
+      await fs.unlink(probe);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

@@ -30,10 +30,23 @@ type LedgerEvent = {
   message: string;
 };
 
+type Health = {
+  ok: boolean;
+  version: string;
+  storageStatus: string;
+  demoMode: boolean;
+  activeProfileId: string | null;
+  ledgerWritable: boolean;
+  profileCount: number;
+  lastEventTimestamp: string | null;
+};
+
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [ledger, setLedger] = useState<LedgerEvent[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [doctor, setDoctor] = useState<{ status: string; issues: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,9 +65,15 @@ export default function App() {
     try {
       const res = await fetch('/api/status');
       const data = await res.json();
+      const healthRes = await fetch('/api/health');
+      const healthData = await healthRes.json();
+      const doctorRes = await fetch('/api/doctor');
+      const doctorData = await doctorRes.json();
       setProfiles(data.profiles ?? []);
       setActiveProfileId(data.runtime?.activeProfileId ?? null);
       setLedger(data.ledger ?? []);
+      setHealth(healthData);
+      setDoctor(doctorData);
       setError(null);
     } catch {
       setError('Failed to load backend status');
@@ -106,6 +125,24 @@ export default function App() {
     <div className="p-6 text-white bg-black min-h-screen">
       <h1 className="text-2xl mb-4">Codex Carousel</h1>
       {error && <div className="text-red-400 mb-4">{error}</div>}
+      <section className="mb-6 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Backend Connection Status</h2>
+        <div className="text-sm">
+          <div><strong>API Reachable:</strong> {health?.ok ? 'Yes' : 'No'}</div>
+          <div><strong>Version:</strong> {health?.version ?? 'Unknown'}</div>
+          <div><strong>Storage Status:</strong> {health?.storageStatus ?? 'Unknown'}</div>
+          <div><strong>Ledger Writable:</strong> {health?.ledgerWritable ? 'Yes' : 'No'}</div>
+          <div><strong>Last Event:</strong> {health?.lastEventTimestamp ?? 'Unknown'}</div>
+        </div>
+        {doctor && doctor.status !== 'healthy' && (
+          <div className="mt-3 text-yellow-300">
+            <strong>Doctor Warnings:</strong>
+            <ul className="list-disc list-inside">
+              {doctor.issues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          </div>
+        )}
+      </section>
 
       <section className="mb-6 border border-gray-700 p-4">
         <h2 className="font-bold mb-2">Active Codex Profile</h2>

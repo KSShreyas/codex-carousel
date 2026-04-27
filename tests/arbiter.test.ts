@@ -17,9 +17,9 @@ describe('Phase 2 policy safety static checks', () => {
 
   it('CLI calls backend API endpoints for profiles/usage/recommend', () => {
     const cli = fs.readFileSync('cli.ts', 'utf-8');
-    expect(cli).toContain('${API_BASE}/profiles');
-    expect(cli).toContain('${API_BASE}/profiles/${profileId}/usage-snapshots');
-    expect(cli).toContain('${API_BASE}/recommendations/recompute');
+    expect(cli).toContain("call('/profiles'");
+    expect(cli).toContain('`/profiles/${profileId}/usage-snapshots`');
+    expect(cli).toContain("call('/recommendations/recompute'");
   });
 
   it('normal mode does not fabricate usage values', () => {

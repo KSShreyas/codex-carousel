@@ -4,6 +4,7 @@
  */
 
 import express from 'express';
+import fs from 'fs/promises';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { loadConfig } from './src/carousel/config';
@@ -58,8 +59,33 @@ async function startServer() {
     };
   };
 
+  const appVersion = async () => {
+    try {
+      const pkgRaw = await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf-8');
+      return (JSON.parse(pkgRaw) as { version?: string }).version ?? '0.0.0';
+    } catch {
+      return '0.0.0';
+    }
+  };
+
   app.get('/api/status', async (_req, res) => {
     res.json(await apiStatus());
+  });
+
+  app.get('/api/health', async (_req, res) => {
+    const state = store.getState();
+    const storageWritable = await store.storageWritable();
+    const ledgerWritable = storageWritable;
+    res.json({
+      ok: storageWritable,
+      version: await appVersion(),
+      storageStatus: storageWritable ? 'ok' : 'error',
+      demoMode: state.settings.demoMode,
+      activeProfileId: state.settings.activeProfileId,
+      ledgerWritable,
+      profileCount: state.profiles.length,
+      lastEventTimestamp: store.getLastEventTimestamp(),
+    });
   });
 
   app.get('/api/profiles', (_req, res) => {
@@ -157,15 +183,65 @@ async function startServer() {
   });
 
   app.get('/api/doctor', (_req, res) => {
-    const state = store.getState();
-    const issues: string[] = [];
-    if (!state.settings.activeProfileId && state.profiles.length > 0) {
-      issues.push('Active profile pointer is not set');
-    }
-    if (state.schemaVersion !== 2) {
-      issues.push('Schema version mismatch');
-    }
-    res.json({ status: issues.length === 0 ? 'healthy' : 'degraded', issues, profileCount: state.profiles.length });
+    (async () => {
+      const state = store.getState();
+      const issues: string[] = [];
+
+      // storage exists
+      try {
+        await fs.access(store.getStorageFilePath());
+      } catch {
+        issues.push('Storage file does not exist');
+      }
+
+      // storage writable and ledger writable
+      const writable = await store.storageWritable();
+      if (!writable) issues.push('Storage is not writable');
+      if (!writable) issues.push('Ledger is not writable');
+
+      // demo mode status + no normal-mode demo accounts
+      if (!state.settings.demoMode) {
+        const seededDemo = state.profiles.filter((p) => p.alias.toLowerCase().includes('demo'));
+        if (seededDemo.length > 0) {
+          issues.push('Demo-like profiles exist while demo mode is disabled');
+        }
+      }
+
+      // active pointer valid
+      if (state.settings.activeProfileId && !state.profiles.some((p) => p.id === state.settings.activeProfileId)) {
+        issues.push('Active profile pointer is invalid');
+      }
+
+      // snapshot paths exist if captured
+      for (const profile of state.profiles) {
+        if (profile.snapshotStatus === SnapshotStatus.Captured && profile.snapshotPath) {
+          try {
+            await fs.access(profile.snapshotPath);
+          } catch {
+            issues.push(`Captured snapshot path missing for profile ${profile.id}`);
+          }
+        }
+      }
+
+      // no switch lock stuck / unfinished switch op
+      const ledger = state.switchEvents;
+      const latestStart = [...ledger].reverse().find((e) => e.eventType === SwitchEventType.SWITCH_STARTED);
+      const latestCompletion = [...ledger].reverse().find((e) =>
+        [SwitchEventType.SWITCH_COMPLETED, SwitchEventType.SWITCH_FAILED, SwitchEventType.ROLLBACK_COMPLETED, SwitchEventType.ROLLBACK_FAILED].includes(e.eventType)
+      );
+      if (latestStart && (!latestCompletion || latestCompletion.timestamp < latestStart.timestamp)) {
+        issues.push('Unfinished switch operation detected without recovery status');
+      }
+
+      res.json({
+        status: issues.length === 0 ? 'healthy' : 'degraded',
+        issues,
+        profileCount: state.profiles.length,
+        demoMode: state.settings.demoMode,
+      });
+    })().catch((err) => {
+      res.status(500).json({ status: 'error', error: String(err) });
+    });
   });
 
   // Backward-compatible account aliases
@@ -226,8 +302,9 @@ async function startServer() {
     app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Codex Carousel Server running on http://localhost:${PORT}`);
+  const host = process.env.CAROUSEL_BIND_HOST || '127.0.0.1';
+  app.listen(PORT, host, () => {
+    console.log(`Codex Carousel Server running on http://${host}:${PORT}`);
   });
 }
 
