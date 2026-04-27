@@ -34,6 +34,34 @@ describe('Phase 6 hardening checks', () => {
     expect(store.getSettings().localSwitchingEnabled).toBe(false);
   });
 
+
+  it('seed-like persisted state never keeps local switching enabled on boot', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'carousel-seeded-'));
+    await fs.promises.writeFile(path.join(root, 'durable-state.json'), JSON.stringify({
+      schemaVersion: 2,
+      profiles: [],
+      usageSnapshots: [],
+      switchEvents: [],
+      settings: {
+        schemaVersion: 2,
+        activeProfileId: null,
+        demoMode: false,
+        localSwitchingEnabled: true,
+        codexProfileRootPath: null,
+        codexLaunchCommand: null,
+        requireCodexClosedBeforeSwitch: true,
+        allowProcessStop: false,
+        autoLaunchAfterSwitch: false,
+        redactSensitivePathsInLogs: true,
+      },
+      profileSnapshotMetadata: {},
+    }, null, 2));
+
+    const store = new DurableStore(root);
+    await store.load();
+    expect(store.getSettings().localSwitchingEnabled).toBe(false);
+  });
+
   it('logger redacts secret-like values', async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'carousel-log-'));
     logger.setLogFile(path.join(root, 'test.jsonl'));

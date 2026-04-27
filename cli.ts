@@ -6,7 +6,7 @@
 import { Command } from 'commander';
 
 const program = new Command();
-const API_BASE = 'http://127.0.0.1:3000/api';
+const API_BASE = process.env.CAROUSEL_API_BASE ?? 'http://127.0.0.1:3000/api';
 
 program
   .name('carousel')
@@ -29,6 +29,42 @@ async function call(path: string, init?: RequestInit) {
     throw new Error(data?.error || `HTTP ${res.status}`);
   }
   return data;
+}
+
+function normalizeSwitchArgs(argv: string[]): string[] {
+  const normalized = [...argv];
+  const switchIndex = normalized.findIndex((token, idx) => idx > 1 && token === 'switch');
+  if (switchIndex === -1) return normalized;
+
+  const tokenAfterSwitch = normalized[switchIndex + 1];
+  const named = new Set(['dry-run', 'status', 'clear-lock', 'run', '--help', '-h']);
+  if (!tokenAfterSwitch || tokenAfterSwitch.startsWith('-') || named.has(tokenAfterSwitch)) return normalized;
+
+  normalized.splice(switchIndex + 1, 0, 'run');
+  return normalized;
+}
+
+async function resolveProfileId(profileOrAlias: string) {
+  const rows = await call('/profiles');
+  const match = rows.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
+  if (!match) {
+    throw new Error(`Profile not found for: ${profileOrAlias}`);
+  }
+  return match.id as string;
+}
+
+async function executeSwitchRun(profileOrAlias: string, options: { fixtureRootDir?: string }) {
+  const targetProfileId = await resolveProfileId(profileOrAlias);
+  const data = await call(`/profiles/${targetProfileId}/switch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true, fixtureRootDir: options.fixtureRootDir ?? null }),
+  });
+
+  print(program, data, (r) => {
+    console.log(`Switch success. Active profile: ${r.activeProfileId}`);
+    console.log(`Verification: ${r.verification}`);
+  });
 }
 
 program.command('status').action(async () => {
@@ -243,26 +279,11 @@ switchCmd.command('clear-lock')
     });
   });
 
-switchCmd.command('<profileOrAlias>')
+switchCmd.command('run <profileOrAlias>')
   .requiredOption('--confirm', 'Explicit confirmation required for real switch')
   .option('--fixture-root-dir <fixtureRootDir>')
   .action(async (profileOrAlias, options) => {
-    const profiles = await call('/profiles');
-    const match = profiles.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
-    if (!match) {
-      throw new Error(`Profile not found for: ${profileOrAlias}`);
-    }
-
-    const data = await call(`/profiles/${match.id}/switch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm: true, fixtureRootDir: options.fixtureRootDir ?? null }),
-    });
-
-    print(program, data, (r) => {
-      console.log(`Switch success. Active profile: ${r.activeProfileId}`);
-      console.log(`Verification: ${r.verification}`);
-    });
+    await executeSwitchRun(profileOrAlias, options);
   });
 
-program.parse();
+program.parse(normalizeSwitchArgs(process.argv));

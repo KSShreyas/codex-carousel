@@ -1,32 +1,29 @@
 # CLI Reference
 
-Codex Carousel provides a powerful CLI for operators. Built with `commander`.
+## Common commands
 
-## Commands
+- `carousel status`
+- `carousel profiles list`
+- `carousel profiles create --alias <alias> --plan <plan>`
+- `carousel usage update <profileId> --five-hour <status> --weekly <status> --credits <status>`
+- `carousel recommend`
+- `carousel ledger`
+- `carousel doctor`
+- `carousel launch`
 
-### `status`
-Show current supervisor and account pool status.
+## Switch commands
 
-### `list`
-Tabular view of all accounts and their health.
+- `carousel switch dry-run <profileId>`
+- `carousel switch status`
+- `carousel switch clear-lock --confirm`
+- `carousel switch run <profileId-or-alias> --confirm`
 
-### `rotate`
-Trigger an immediate manual account rotation.
+Compatibility path:
+- `carousel switch <profileId-or-alias> --confirm`
 
-### `import <alias> [-p priority]`
-Import a new account from the inbox.
+The compatibility path is internally normalized to `switch run` to avoid Commander parsing conflicts.
 
-### `suspend <id> [-r reason]`
-Manually suspend an account.
+## Windows invocation fallback
 
-### `reactivate <id>`
-Return a suspended or cooling account to circulation.
-
-### `disable <id>`
-Toggle the manual lock status of an account.
-
-### `ledger`
-Inspect the current durable checkpoint.
-
-### `doctor`
-Run system-wide health checks.
+- `npx.cmd tsx cli.ts ...`
+- `node .\node_modules\tsx\dist\cli.mjs cli.ts ...`
