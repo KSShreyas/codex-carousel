@@ -1,19 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 
-describe('Manual profile switch endpoint semantics', () => {
+describe('Switch behavior is explicit/manual only', () => {
   const server = fs.readFileSync('server.ts', 'utf-8');
 
-  it('includes explicit /api/switch endpoint', () => {
-    expect(server).toContain('app.post("/api/switch"');
+  it('requires explicit targetProfileId for manual switch', () => {
+    expect(server).toContain('targetProfileId is required and must exist');
   });
 
-  it('legacy /api/rotate is disabled', () => {
-    expect(server).toContain('Legacy endpoint removed. Use /api/switch');
+  it('switch endpoint is pointer-update only in phase 2', () => {
+    expect(server).toContain('realFileSwitching: false');
   });
 
-  it('monitor callback does not auto-execute switching', () => {
-    expect(server).toContain('never auto-switch');
-    expect(server).not.toContain('Auto-switch failed');
+  it('no automatic switch execution path exists in monitor callback wiring', () => {
+    expect(server).not.toContain('performSwitch(reason)');
   });
 });

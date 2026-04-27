@@ -169,3 +169,124 @@ export interface BridgeEvent {
   timestamp: string;
   payload?: any;
 }
+
+export enum ProfilePlan {
+  Plus = 'Plus',
+  Pro100 = 'Pro100',
+  Pro200 = 'Pro200',
+  Unknown = 'Unknown',
+}
+
+export enum SnapshotStatus {
+  Missing = 'Missing',
+  Captured = 'Captured',
+  Invalid = 'Invalid',
+  Unknown = 'Unknown',
+}
+
+export enum VerificationStatus {
+  Verified = 'Verified',
+  Unverified = 'Unverified',
+  Failed = 'Failed',
+  Unknown = 'Unknown',
+}
+
+export enum LimitStatus {
+  Available = 'Available',
+  Low = 'Low',
+  Exhausted = 'Exhausted',
+  Unknown = 'Unknown',
+}
+
+export enum RecommendationStatus {
+  Stay = 'Stay',
+  SwitchSoon = 'SwitchSoon',
+  SwitchNow = 'SwitchNow',
+  VerifyFirst = 'VerifyFirst',
+  Unknown = 'Unknown',
+}
+
+export interface ProfileRecord {
+  id: string;
+  alias: string;
+  plan: ProfilePlan;
+  capacityMultiplier: number;
+  priority: number;
+  snapshotPath: string | null;
+  snapshotStatus: SnapshotStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastActivatedAt: string | null;
+  lastVerifiedAt: string | null;
+  verificationStatus: VerificationStatus;
+  fiveHourStatus: LimitStatus;
+  weeklyStatus: LimitStatus;
+  creditsStatus: LimitStatus;
+  observedResetAt: string | null;
+  lastLimitBanner: string | null;
+  notes: string | null;
+  recommendation: RecommendationStatus;
+  recommendationReason: string | null;
+}
+
+export enum UsageSnapshotSource {
+  Manual = 'Manual',
+  CodexBanner = 'CodexBanner',
+  UsageDashboard = 'UsageDashboard',
+  Unknown = 'Unknown',
+}
+
+export interface ProfileUsageSnapshot {
+  id: string;
+  profileId: string;
+  fiveHourStatus: LimitStatus;
+  weeklyStatus: LimitStatus;
+  creditsStatus: LimitStatus;
+  observedResetAt: string | null;
+  lastLimitBanner: string | null;
+  notes: string | null;
+  source: UsageSnapshotSource;
+  createdAt: string;
+}
+
+export enum SwitchEventType {
+  PROFILE_CREATED = 'PROFILE_CREATED',
+  PROFILE_UPDATED = 'PROFILE_UPDATED',
+  PROFILE_CAPTURE_REQUESTED = 'PROFILE_CAPTURE_REQUESTED',
+  PROFILE_CAPTURE_COMPLETED = 'PROFILE_CAPTURE_COMPLETED',
+  PROFILE_CAPTURE_FAILED = 'PROFILE_CAPTURE_FAILED',
+  USAGE_SNAPSHOT_UPDATED = 'USAGE_SNAPSHOT_UPDATED',
+  SWITCH_RECOMMENDED = 'SWITCH_RECOMMENDED',
+  SWITCH_STARTED = 'SWITCH_STARTED',
+  SWITCH_DRY_RUN_STARTED = 'SWITCH_DRY_RUN_STARTED',
+  SWITCH_DRY_RUN_COMPLETED = 'SWITCH_DRY_RUN_COMPLETED',
+  ACTIVE_PROFILE_BACKED_UP = 'ACTIVE_PROFILE_BACKED_UP',
+  TARGET_PROFILE_RESTORED = 'TARGET_PROFILE_RESTORED',
+  CODEX_LAUNCH_REQUESTED = 'CODEX_LAUNCH_REQUESTED',
+  VERIFY_STARTED = 'VERIFY_STARTED',
+  VERIFY_SUCCEEDED = 'VERIFY_SUCCEEDED',
+  VERIFY_UNAVAILABLE = 'VERIFY_UNAVAILABLE',
+  VERIFY_FAILED = 'VERIFY_FAILED',
+  SWITCH_COMPLETED = 'SWITCH_COMPLETED',
+  SWITCH_FAILED = 'SWITCH_FAILED',
+  ROLLBACK_STARTED = 'ROLLBACK_STARTED',
+  ROLLBACK_COMPLETED = 'ROLLBACK_COMPLETED',
+  ROLLBACK_FAILED = 'ROLLBACK_FAILED',
+}
+
+export interface SwitchEvent {
+  id: string;
+  timestamp: string;
+  eventType: SwitchEventType;
+  profileId: string | null;
+  targetProfileId: string | null;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  metadata: Record<string, any>;
+}
+
+export interface AppSettingsV2 {
+  schemaVersion: number;
+  activeProfileId: string | null;
+  demoMode: boolean;
+}

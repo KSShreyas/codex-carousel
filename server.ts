@@ -3,244 +3,235 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import express from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
-import fs from "fs/promises";
+import express from 'express';
+import path from 'path';
+import { createServer as createViteServer } from 'vite';
+import { loadConfig } from './src/carousel/config';
+import { logger } from './src/carousel/logging';
+import { DurableStore } from './src/carousel/durableStore';
+import { persistRecommendations, recomputeRecommendations } from './src/carousel/recommendations';
+import { LimitStatus, ProfilePlan, SnapshotStatus, SwitchEventType, UsageSnapshotSource, VerificationStatus } from './src/carousel/types';
 
-import { Storage } from "./src/carousel/storage";
-import { Registry } from "./src/carousel/registry";
-import { Arbiter } from "./src/carousel/arbiter";
-import { Ledger } from "./src/carousel/ledger";
-import { Bridge } from "./src/carousel/bridge";
-import { Monitor } from "./src/carousel/monitor";
-import { loadConfig } from "./src/carousel/config";
-import { SwitchReason, AccountState, FailureKind } from "./src/carousel/types";
-import { logger } from "./src/carousel/logging";
-import { RuntimeStore } from "./src/carousel/runtime";
+function parsePlan(input: any): ProfilePlan {
+  return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
+}
+
+function parseLimit(input: any): LimitStatus {
+  return Object.values(LimitStatus).includes(input) ? input : LimitStatus.Unknown;
+}
+
+function parseUsageSource(input: any): UsageSnapshotSource {
+  return Object.values(UsageSnapshotSource).includes(input) ? input : UsageSnapshotSource.Unknown;
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
-
   app.use(express.json());
 
-  // Initialization
   const config = loadConfig();
-  const storage = new Storage(config.stateDir);
-  
-  // Ensure directories exist
-  await storage.ensureDir();
-  await storage.ensureDir('ledgers');
-  await storage.ensureDir('ledgers/history');
-  await storage.ensureDir(path.relative(process.cwd(), config.logDir));
-  
-  // Initialize logger with log directory
   logger.setLogFile(path.join(config.logDir, 'carousel.jsonl'));
   await logger.init();
-  
-  const registry = new Registry(storage, config);
-  const arbiter = new Arbiter(config);
-  const ledger = new Ledger(storage);
-  const runtimeStore = new RuntimeStore(storage);
-  const bridge = new Bridge(registry, arbiter, ledger, runtimeStore, config);
-  
-  await bridge.initialize();
 
-  // Bootstrap demo profiles only in explicit demo mode
-  const existingAccounts = registry.getAllAccounts();
-  if (existingAccounts.length === 0 && config.demoMode) {
-    logger.log('DEMO MODE: Seeding demo profiles');
-    await registry.importAccount({ alias: 'Demo Profile A', priority: 10, sourcePath: '/demo/profile-a.json', disabled: false, metadata: { demo: true } });
-    await registry.importAccount({ alias: 'Demo Profile B', priority: 5, sourcePath: '/demo/profile-b.json', disabled: false, metadata: { demo: true } });
-    logger.log('DEMO MODE: Created 2 demo profiles');
+  const store = new DurableStore(config.stateDir);
+  await store.load();
+  await store.patchSettings({ demoMode: config.demoMode });
+
+  // Demo mode seeding is explicit and disabled by default.
+  if (config.demoMode && store.getState().profiles.length === 0) {
+    await store.createProfile({ alias: 'Demo Codex Profile', plan: ProfilePlan.Unknown, priority: 1, snapshotPath: '/demo/profile.json', notes: 'Demo mode seeded profile' });
   }
 
-  const monitor = new Monitor(registry, config, (reason) => {
-    // Phase 1 scope lock: never auto-switch.
-    logger.log('Recommendation generated', { reason });
-  });
-  monitor.start();
+  const apiStatus = async () => {
+    const state = store.getState();
+    const activeProfile = state.settings.activeProfileId ? state.profiles.find((p) => p.id === state.settings.activeProfileId) ?? null : null;
+    const recommendations = recomputeRecommendations(store);
+    return {
+      runtime: {
+        activeProfileId: state.settings.activeProfileId,
+      },
+      activeProfile,
+      profiles: state.profiles,
+      recommendations,
+      settings: state.settings,
+      ledger: state.switchEvents.slice(-100).reverse(),
+    };
+  };
 
-  // API Routes
-  app.get("/api/status", (req, res) => {
-    res.json({
-      runtime: bridge.getRuntime(),
-      accounts: registry.getAllAccounts().map(acc => ({
-        ...acc,
-        health: registry.getHealth(acc.id)
-      })),
-      ledger: ledger.getCurrent(),
-      config
+  app.get('/api/status', async (_req, res) => {
+    res.json(await apiStatus());
+  });
+
+  app.get('/api/profiles', (_req, res) => {
+    res.json(store.listProfiles());
+  });
+
+  app.get('/api/profiles/:id', (req, res) => {
+    const profile = store.getProfile(req.params.id);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+    res.json(profile);
+  });
+
+  app.post('/api/profiles', async (req, res) => {
+    const { alias, plan, priority, snapshotPath, notes } = req.body;
+    if (!alias) return res.status(400).json({ error: 'alias is required' });
+
+    const created = await store.createProfile({
+      alias,
+      plan: parsePlan(plan),
+      priority: Number.isFinite(priority) ? Number(priority) : 1,
+      snapshotPath: snapshotPath ?? null,
+      notes: notes ?? null,
     });
-  });
 
-  app.get("/api/accounts", (req, res) => {
-    res.json(registry.getAllAccounts().map(acc => ({
-      ...acc,
-      health: registry.getHealth(acc.id)
-    })));
-  });
-
-  app.get("/api/runtime", (req, res) => {
-    res.json(bridge.getRuntime());
-  });
-
-  app.get("/api/ledger", (req, res) => {
-    res.json(ledger.getCurrent());
-  });
-
-  app.get("/api/logs", async (req, res) => {
-    const limit = parseInt(req.query.limit as string) || 100;
-    const logs = await logger.loadRecentEvents(limit);
-    res.json(logs);
-  });
-
-  app.get("/api/doctor", (req, res) => {
-    const accounts = registry.getAllAccounts();
-    const runtime = bridge.getRuntime();
-    const issues = [];
-    
-    if (!runtime.activeAccountId && accounts.length > 0) {
-      issues.push("No active account selected");
-    }
-    if (accounts.length === 0) {
-      issues.push("Account registry is empty");
-    }
-    
-    // Check for accounts in bad states
-    for (const acc of accounts) {
-      const health = registry.getHealth(acc.id);
-      if (health?.consecutiveFailures >= config.maxConsecutiveFailures) {
-        issues.push(`Account ${acc.alias} has ${health.consecutiveFailures} consecutive failures`);
-      }
-    }
-    
-    res.json({ status: issues.length === 0 ? 'healthy' : 'degraded', issues, runtime, accountCount: accounts.length });
-  });
-
-  app.post("/api/accounts/import", async (req, res) => {
-    const { alias, priority, sourcePath } = req.body;
-    if (!alias) {
-      return res.status(400).json({ error: 'Alias is required' });
-    }
-    if (!sourcePath) {
-      return res.status(400).json({ error: 'Source path is required for explicit profile capture' });
-    }
-    
-    try {
-      const acc = await registry.importAccount({
-        alias,
-        priority: priority ?? 1,
-        sourcePath,
-        disabled: false,
-        metadata: {}
+    if (store.getSettings().activeProfileId === null) {
+      await store.setActiveProfile(created.id);
+      store.appendEvent({
+        eventType: SwitchEventType.SWITCH_COMPLETED,
+        profileId: created.id,
+        targetProfileId: null,
+        severity: 'info',
+        message: 'Initial active profile selected',
+        metadata: {},
       });
-      logger.log('API: Account imported', { id: acc.id, alias: acc.alias, sourcePath: acc.sourcePath });
-      res.json(acc);
-    } catch (err) {
-      logger.error('API: Import failed', err);
-      res.status(500).json({ error: String(err) });
+      await store.save();
     }
+
+    res.status(201).json(created);
   });
 
-  app.post("/api/switch", async (req, res) => {
-    try {
-      const result = await bridge.performSwitch(SwitchReason.UserManuallySwitched);
-      if (result.success) {
-        logger.log('API: Profile switch completed', { selectedId: result.selectedId });
-        res.json({ success: true, selectedId: result.selectedId });
-      } else {
-        logger.error('API: Profile switch failed', result.error);
-        res.status(500).json({ success: false, error: result.error });
-      }
-    } catch (err) {
-      logger.error('API: Profile switch exception', err);
-      res.status(500).json({ error: String(err) });
-    }
+  app.patch('/api/profiles/:id', async (req, res) => {
+    const patch = { ...req.body };
+    if (patch.plan) patch.plan = parsePlan(patch.plan);
+    if (patch.fiveHourStatus) patch.fiveHourStatus = parseLimit(patch.fiveHourStatus);
+    if (patch.weeklyStatus) patch.weeklyStatus = parseLimit(patch.weeklyStatus);
+    if (patch.creditsStatus) patch.creditsStatus = parseLimit(patch.creditsStatus);
+    if (patch.snapshotStatus && !Object.values(SnapshotStatus).includes(patch.snapshotStatus)) patch.snapshotStatus = SnapshotStatus.Unknown;
+    if (patch.verificationStatus && !Object.values(VerificationStatus).includes(patch.verificationStatus)) patch.verificationStatus = VerificationStatus.Unknown;
+
+    const updated = await store.updateProfile(req.params.id, patch);
+    if (!updated) return res.status(404).json({ error: 'Profile not found' });
+    res.json(updated);
   });
 
-  app.post("/api/rotate", async (_req, res) => {
-    res.status(410).json({ error: 'Legacy endpoint removed. Use /api/switch for explicit manual profile switch.' });
-  });
-
-  app.post("/api/accounts/:id/suspend", async (req, res) => {
-    const { reason } = req.body;
-    await registry.suspendAccount(req.params.id, reason ?? 'Manual suspension');
-    res.json({ success: true });
-  });
-
-  app.post("/api/accounts/:id/reactivate", async (req, res) => {
-    await registry.reactivateAccount(req.params.id);
-    res.json({ success: true });
-  });
-
-  app.post("/api/accounts/:id/disable", async (req, res) => {
-    await registry.setAccountDisabled(req.params.id, true);
-    res.json({ success: true });
-  });
-
-  app.post("/api/accounts/:id/enable", async (req, res) => {
-    await registry.setAccountDisabled(req.params.id, false);
-    res.json({ success: true });
-  });
-
-  app.post("/api/accounts/:id/toggle", async (req, res) => {
-    const acc = registry.getAccount(req.params.id);
-    if (!acc) return res.status(404).json({ error: "Not found" });
-    await registry.setAccountDisabled(req.params.id, !acc.disabled);
-    res.json({ ...acc, disabled: !acc.disabled });
-  });
-
-  app.post("/api/accounts/:id/cooldown", async (req, res) => {
-    const cooldownUntil = new Date(Date.now() + config.cooldownDurationMinutes * 60 * 1000).toISOString();
-    registry.updateHealth(req.params.id, { state: AccountState.CoolingDown, cooldownUntil });
-    await registry.save();
-    res.json({ success: true, cooldownUntil });
-  });
-
-  app.post("/api/accounts/:id/refresh", async (req, res) => {
-    try {
-      const usage = await monitor.refreshUsage(req.params.id, req.body);
-      if (!usage) {
-        return res.status(400).json({ error: 'Observed usage payload is required' });
-      }
-      res.json(usage);
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  app.post("/api/rebuild", async (req, res) => {
-    try {
-      await registry.rebuildFromDisk(config.inboxDir);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  // Vite middleware
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+  app.post('/api/profiles/:id/usage-snapshots', async (req, res) => {
+    const snapshot = await store.addUsageSnapshot(req.params.id, {
+      fiveHourStatus: parseLimit(req.body.fiveHourStatus),
+      weeklyStatus: parseLimit(req.body.weeklyStatus),
+      creditsStatus: parseLimit(req.body.creditsStatus),
+      observedResetAt: req.body.observedResetAt ?? null,
+      lastLimitBanner: req.body.lastLimitBanner ?? null,
+      notes: req.body.notes ?? null,
+      source: parseUsageSource(req.body.source),
     });
+
+    if (!snapshot) return res.status(404).json({ error: 'Profile not found' });
+    res.status(201).json(snapshot);
+  });
+
+  app.get('/api/profiles/:id/usage-snapshots', (req, res) => {
+    res.json(store.listUsageSnapshots(req.params.id));
+  });
+
+  app.get('/api/ledger', (req, res) => {
+    const limit = Number(req.query.limit ?? 200);
+    res.json(store.getLedger(limit));
+  });
+
+  app.get('/api/recommendations', (_req, res) => {
+    res.json(recomputeRecommendations(store));
+  });
+
+  app.post('/api/recommendations/recompute', async (_req, res) => {
+    const result = await persistRecommendations(store);
+    res.json(result);
+  });
+
+  app.get('/api/settings', (_req, res) => {
+    res.json(store.getSettings());
+  });
+
+  app.patch('/api/settings', async (req, res) => {
+    const patched = await store.patchSettings(req.body);
+    res.json(patched);
+  });
+
+  app.get('/api/doctor', (_req, res) => {
+    const state = store.getState();
+    const issues: string[] = [];
+    if (!state.settings.activeProfileId && state.profiles.length > 0) {
+      issues.push('Active profile pointer is not set');
+    }
+    if (state.schemaVersion !== 2) {
+      issues.push('Schema version mismatch');
+    }
+    res.json({ status: issues.length === 0 ? 'healthy' : 'degraded', issues, profileCount: state.profiles.length });
+  });
+
+  // Backward-compatible account aliases
+  app.get('/api/accounts', (_req, res) => res.json(store.listProfiles()));
+  app.post('/api/accounts/import', async (req, res) => {
+    const created = await store.createProfile({
+      alias: req.body.alias,
+      plan: parsePlan(req.body.plan),
+      priority: Number.isFinite(req.body.priority) ? Number(req.body.priority) : 1,
+      snapshotPath: req.body.sourcePath ?? null,
+    });
+    store.appendEvent({
+      eventType: SwitchEventType.PROFILE_CAPTURE_COMPLETED,
+      profileId: created.id,
+      targetProfileId: null,
+      severity: 'info',
+      message: 'Legacy import mapped to profile creation',
+      metadata: {},
+    });
+    await store.save();
+    res.status(201).json(created);
+  });
+
+  // Manual-only switch: pointer update + ledger event only.
+  app.post('/api/switch', async (req, res) => {
+    const { targetProfileId } = req.body;
+    const target = targetProfileId ? store.getProfile(targetProfileId) : null;
+    if (!target) return res.status(400).json({ error: 'targetProfileId is required and must exist' });
+
+    const current = store.getSettings().activeProfileId;
+    store.appendEvent({
+      eventType: SwitchEventType.SWITCH_STARTED,
+      profileId: current,
+      targetProfileId,
+      severity: 'info',
+      message: 'Manual switch started (pointer update only)',
+      metadata: { phase: 2, realFileSwitching: false },
+    });
+    await store.setActiveProfile(targetProfileId);
+    store.appendEvent({
+      eventType: SwitchEventType.SWITCH_COMPLETED,
+      profileId: current,
+      targetProfileId,
+      severity: 'info',
+      message: 'Manual switch completed (pointer update only)',
+      metadata: { phase: 2, realFileSwitching: false },
+    });
+    await store.save();
+    res.json({ success: true, activeProfileId: targetProfileId });
+  });
+
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`Codex Carousel Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer().catch(err => {
-  console.error("Critical server failure:", err);
+startServer().catch((err) => {
+  console.error('Critical server failure:', err);
   process.exit(1);
 });
