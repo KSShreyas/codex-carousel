@@ -1,6 +1,6 @@
 # Codex Carousel V1.0
 
-Codex Carousel is a local-first operator console for managing multiple **legitimate ChatGPT-login Codex profiles** with explicit, manual switching.
+Codex Carousel is a local-first account switcher for managing multiple **legitimate ChatGPT-login Codex profiles** with explicit, manual switching.
 
 ## Core guarantees
 
@@ -10,14 +10,15 @@ Codex Carousel is a local-first operator console for managing multiple **legitim
 - No fake usage values or fake identity verification.
 - Raw auth/session contents are not exposed in API/UI/CLI logs.
 
-## UI (Phase 7)
+## UI (Phase 9)
 
-The dashboard is restored to a production-style operator console:
-- dark cyberpunk layout
-- active profile/recommendation/usage/settings cards
-- profile table + capture/switch controls
-- event ledger
-- doctor/safety status footer
+The dashboard is now a simplified product UI:
+- friendly header with backend/setup status
+- setup banner + **Set Up Codex** wizard
+- current account + saved accounts + recommendation + recent activity
+- add-account, safety-check, switch-account, and update-usage modals
+- technical diagnostics/settings hidden in Advanced Settings
+- add-account wizard flow: **Open Codex Login → I Logged In → Save This Account**
 
 See `docs/UI_ACCEPTANCE_CHECKLIST.md`.
 
@@ -78,3 +79,25 @@ npm run screenshot
 ```
 
 If `npm run screenshot` fails, it should fail with an explicit dependency reason (Playwright/browser deps).
+
+## Codex setup wizard
+
+If setup is missing, use **Set Up Codex**:
+1. Scan for Codex
+2. Confirm Codex data folder
+3. Confirm Codex app path/launch command
+4. Save setup and enable switching
+
+Carousel does **not** ask for passwords, does **not** scrape token contents, and only stores safe filesystem metadata for discovery.
+
+## Add Account flow
+
+The add-account experience is explicitly user-facing:
+1. Click **Add Account**
+2. Click **Open Codex Login**
+3. Sign in with the target ChatGPT/OpenAI account
+4. Click **I Logged In**
+5. Set **Account Name** and **Plan**
+6. Click **Save This Account**
+
+On success the UI shows **Account Saved** and **Ready to Switch** messaging.

@@ -13,6 +13,8 @@ import { DurableStore } from './src/carousel/durableStore';
 import { persistRecommendations, recomputeRecommendations } from './src/carousel/recommendations';
 import { LimitStatus, ProfilePlan, SnapshotStatus, SwitchEventType, UsageSnapshotSource, VerificationStatus } from './src/carousel/types';
 import { SwitchEngine } from './src/carousel/switchEngine';
+import { CodexDiscoveryService } from './src/carousel/codexDiscovery';
+import { applyCodexSetup } from './src/carousel/codexSetup';
 
 function parsePlan(input: any): ProfilePlan {
   return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
@@ -44,6 +46,7 @@ async function startServer() {
   await store.load();
   await store.patchSettings({ demoMode: config.demoMode });
   const switchEngine = new SwitchEngine(store, config.stateDir);
+  const codexDiscovery = new CodexDiscoveryService();
 
   // Demo mode seeding is explicit and disabled by default.
   if (config.demoMode && store.getState().profiles.length === 0) {
@@ -257,9 +260,30 @@ async function startServer() {
       const launchIssue = await switchEngine.getDoctorLaunchIssue();
       if (launchIssue) issues.push(launchIssue);
 
+      const discovery = await codexDiscovery.discover(state.settings);
+      const codexFound = discovery.candidates.some((c) => c.kind === 'packageRoot' && c.exists);
+      const dataFolderConfigured = Boolean(state.settings.codexProfileRootPath);
+      const appPathConfigured = Boolean(state.settings.codexLaunchCommand);
+      const switchingSetupComplete = Boolean(state.settings.localSwitchingEnabled && dataFolderConfigured);
+      const missingSteps: string[] = [];
+      if (!codexFound) missingSteps.push('Codex found');
+      if (!dataFolderConfigured) missingSteps.push('Codex data folder configured');
+      if (!appPathConfigured) missingSteps.push('Codex app path configured');
+      if (!switchingSetupComplete) missingSteps.push('Account switching setup complete');
+      if (missingSteps.length > 0) {
+        issues.push(`Missing setup steps: ${missingSteps.join(', ')}`);
+      }
+
       res.json({
         status: issues.length === 0 ? 'healthy' : 'degraded',
         issues,
+        setup: {
+          codexFound,
+          dataFolderConfigured,
+          appPathConfigured,
+          switchingSetupComplete,
+          missingSteps,
+        },
         profileCount: state.profiles.length,
         demoMode: state.settings.demoMode,
       });
@@ -304,9 +328,40 @@ async function startServer() {
     }
   });
 
+  app.post('/api/accounts/add-current-login', async (req, res) => {
+    const alias = req.body?.alias;
+    const plan = parsePlan(req.body?.plan);
+    if (!alias) return res.status(400).json({ error: 'Account name is required' });
+
+    try {
+      const result = await switchEngine.captureCurrentProfile({ alias, plan });
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
   app.post('/api/codex/launch', async (_req, res) => {
     try {
       const result = await switchEngine.launchCodex();
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.get('/api/codex/discover', async (_req, res) => {
+    const discovery = await codexDiscovery.discover(store.getSettings());
+    res.json(discovery);
+  });
+
+  app.post('/api/codex/setup/apply', async (req, res) => {
+    try {
+      const result = await applyCodexSetup(store, {
+        codexProfileRootPath: req.body?.codexProfileRootPath ?? null,
+        codexLaunchCommand: req.body?.codexLaunchCommand ?? null,
+        enableSwitching: req.body?.enableSwitching === true,
+      });
       res.json(result);
     } catch (error) {
       res.status(400).json({ error: String(error) });
