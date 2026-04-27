@@ -430,4 +430,19 @@ describe('Integration Tests', () => {
       expect(health?.state).toBe(AccountState.Recovering);
     });
   });
+
+  describe('Monitor Usage Data Safety', () => {
+    it('does not generate fake usage in normal mode without observed payload', async () => {
+      const acc = await registry.importAccount({ alias: 'Usage Safety', priority: 1, sourcePath: '/u1.json', disabled: false, metadata: {} });
+      const monitor = new (await import('../src/carousel/monitor')).Monitor(
+        registry,
+        config,
+        () => {}
+      );
+
+      const usage = await monitor.refreshUsage(acc.id);
+      expect(usage).toBeNull();
+      expect(registry.getHealth(acc.id)?.usage).toBeNull();
+    });
+  });
 });

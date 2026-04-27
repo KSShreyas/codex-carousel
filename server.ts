@@ -36,7 +36,7 @@ async function startServer() {
   await storage.ensureDir(path.relative(process.cwd(), config.logDir));
   
   // Initialize logger with log directory
-  logger.logFile = path.join(config.logDir, 'carousel.jsonl');
+  logger.setLogFile(path.join(config.logDir, 'carousel.jsonl'));
   await logger.init();
   
   const registry = new Registry(storage, config);
@@ -47,18 +47,18 @@ async function startServer() {
   
   await bridge.initialize();
 
-  // Bootstrap if empty (dev mode only) - GATED BEHIND EXPLICIT FLAG
+  // Bootstrap demo profiles only in explicit demo mode
   const existingAccounts = registry.getAllAccounts();
-  if (existingAccounts.length === 0 && process.env.CAROUSEL_BOOTSTRAP_DEV === 'true') {
-    logger.log('DEV BOOTSTRAP MODE: Creating starter accounts');
-    await registry.importAccount({ alias: 'Primary Account', priority: 10, sourcePath: 'auth_1.json', disabled: false, metadata: {} });
-    await registry.importAccount({ alias: 'Secondary Buffer', priority: 5, sourcePath: 'auth_2.json', disabled: false, metadata: {} });
-    await registry.importAccount({ alias: 'Safety Overflow', priority: 1, sourcePath: 'auth_3.json', disabled: false, metadata: {} });
-    logger.log('DEV BOOTSTRAP: Created 3 starter accounts');
+  if (existingAccounts.length === 0 && config.demoMode) {
+    logger.log('DEMO MODE: Seeding demo profiles');
+    await registry.importAccount({ alias: 'Demo Profile A', priority: 10, sourcePath: '/demo/profile-a.json', disabled: false, metadata: { demo: true } });
+    await registry.importAccount({ alias: 'Demo Profile B', priority: 5, sourcePath: '/demo/profile-b.json', disabled: false, metadata: { demo: true } });
+    logger.log('DEMO MODE: Created 2 demo profiles');
   }
 
   const monitor = new Monitor(registry, config, (reason) => {
-    bridge.performSwitch(reason).catch(err => logger.error('Auto-switch failed', err));
+    // Phase 1 scope lock: never auto-switch.
+    logger.log('Recommendation generated', { reason });
   });
   monitor.start();
 
@@ -124,17 +124,15 @@ async function startServer() {
     if (!alias) {
       return res.status(400).json({ error: 'Alias is required' });
     }
-    
-    // In production mode, require explicit source path
-    if (!sourcePath && process.env.CAROUSEL_PRODUCTION === 'true') {
-      return res.status(400).json({ error: 'Source path is required in production mode' });
+    if (!sourcePath) {
+      return res.status(400).json({ error: 'Source path is required for explicit profile capture' });
     }
     
     try {
       const acc = await registry.importAccount({
         alias,
         priority: priority ?? 1,
-        sourcePath: sourcePath || `./auth-${Date.now()}.json`,
+        sourcePath,
         disabled: false,
         metadata: {}
       });
@@ -146,20 +144,24 @@ async function startServer() {
     }
   });
 
-  app.post("/api/rotate", async (req, res) => {
+  app.post("/api/switch", async (req, res) => {
     try {
       const result = await bridge.performSwitch(SwitchReason.UserManuallySwitched);
       if (result.success) {
-        logger.log('API: Rotation completed', { selectedId: result.selectedId });
+        logger.log('API: Profile switch completed', { selectedId: result.selectedId });
         res.json({ success: true, selectedId: result.selectedId });
       } else {
-        logger.error('API: Rotation failed', result.error);
+        logger.error('API: Profile switch failed', result.error);
         res.status(500).json({ success: false, error: result.error });
       }
     } catch (err) {
-      logger.error('API: Rotation exception', err);
+      logger.error('API: Profile switch exception', err);
       res.status(500).json({ error: String(err) });
     }
+  });
+
+  app.post("/api/rotate", async (_req, res) => {
+    res.status(410).json({ error: 'Legacy endpoint removed. Use /api/switch for explicit manual profile switch.' });
   });
 
   app.post("/api/accounts/:id/suspend", async (req, res) => {
@@ -199,7 +201,10 @@ async function startServer() {
 
   app.post("/api/accounts/:id/refresh", async (req, res) => {
     try {
-      const usage = await monitor.refreshUsage(req.params.id);
+      const usage = await monitor.refreshUsage(req.params.id, req.body);
+      if (!usage) {
+        return res.status(400).json({ error: 'Observed usage payload is required' });
+      }
       res.json(usage);
     } catch (err) {
       res.status(500).json({ error: String(err) });

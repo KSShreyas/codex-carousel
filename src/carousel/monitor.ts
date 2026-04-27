@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AccountId, UsageSnapshot, AccountState, AppConfig, SwitchReason } from './types';
+import { AccountId, UsageSnapshot, AccountState, AppConfig, SwitchReason, UsageConfidence } from './types';
 import { Registry } from './registry';
 import { logger } from './logging';
 
@@ -36,6 +36,8 @@ export class Monitor {
           const { five_hour_remaining, weekly_remaining } = health.usage;
           if (five_hour_remaining < this.config.fiveHourThreshold || weekly_remaining < this.config.weeklyThreshold) {
             logger.log('Quota pressure detected', { id: acc.id, usage: health.usage });
+            // Phase 1 scope lock: never auto-switch profiles.
+            // Keep recommendation signal for explicit manual action only.
             this.onSwitchNeeded(SwitchReason.QuotaPressure);
           }
         }
@@ -76,56 +78,35 @@ export class Monitor {
             suspendedReason: `Recovery failed after ${currentAttempts} attempts`
           });
         } else {
-          // Simulate a recovery probe - in production this would check actual account health
-          // For now, we assume recovery succeeds after entering Recovering state
-          // In production, this would call a real health check endpoint
-          logger.log('Recovery probe successful', { id: acc.id });
-          this.registry.updateHealth(acc.id, { 
-            state: AccountState.Available,
-            cooldownUntil: null,
-            recoveryAttempts: 0,
-            consecutiveFailures: 0,
-            lastFailureKind: null
-          });
+          // Phase 1 scope lock: do not perform fake cooldown recovery.
+          // Leave profile in Recovering until explicit operator action.
+          logger.log('Recovery pending manual verification', { id: acc.id, attempts: currentAttempts });
         }
       }
     }
   }
 
   /**
-   * Refresh usage from quota provider
-   * In production, this would call actual Codex quota API
-   * For dev/test, returns simulated but deterministic values
+   * Refresh usage from observed provider.
+   * Phase 1 scope lock: normal mode must not generate fake usage.
+   * In demo mode only, caller may provide simulated data explicitly.
    */
-  async refreshUsage(id: AccountId): Promise<UsageSnapshot> {
-    const health = this.registry.getHealth(id);
-    
-    // In production mode (when CAROUSEL_PRODUCTION=true), this would:
-    // 1. Call actual Codex quota API endpoint
-    // 2. Parse real usage data
-    // 3. Return actual remaining quotas
-    
-    // For dev/test, we use deterministic simulation based on account ID
-    // This ensures consistent behavior for testing while not using random values
-    const current = health?.usage ?? { 
-      five_hour_remaining: 50, 
-      five_hour_total: 50, 
-      weekly_remaining: 200, 
-      weekly_total: 200, 
-      timestamp: new Date().toISOString() 
-    };
+  async refreshUsage(id: AccountId, observed?: Omit<UsageSnapshot, 'timestamp' | 'confidence'>): Promise<UsageSnapshot | null> {
+    if (!observed) {
+      return null;
+    }
+    if (!this.config.demoMode && observed.five_hour_remaining < 0) {
+      throw new Error('Invalid observed usage payload');
+    }
 
-    // Deterministic "usage" based on account ID hash (no randomness)
-    const idHash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const usageDelta = idHash % 5; // Deterministic value 0-4
-    
     const next: UsageSnapshot = {
-      ...current,
-      five_hour_remaining: Math.max(0, current.five_hour_remaining - usageDelta),
+      ...observed,
       timestamp: new Date().toISOString(),
+      confidence: this.config.demoMode ? UsageConfidence.SimulatedDemo : UsageConfidence.Observed,
     };
 
     this.registry.updateHealth(id, { usage: next, lastRefreshAt: new Date().toISOString() });
+    await this.registry.save();
     return next;
   }
 }

@@ -83,13 +83,11 @@ export class Registry {
   }
 
   async importAccount(record: Omit<AccountRegistryRecord, 'fingerprint' | 'id'>): Promise<AccountRegistryRecord> {
-    // Validate source path - must be provided in production mode
-    if (!record.sourcePath && process.env.CAROUSEL_PRODUCTION === 'true') {
-      throw new Error('Source path is required for account import in production mode');
+    // Phase 1 scope lock: source path must be explicit in all modes.
+    if (!record.sourcePath) {
+      throw new Error('Source path is required for explicit profile capture');
     }
-    
-    // In dev mode, generate a source path if not provided (for testing convenience)
-    const effectiveSourcePath = record.sourcePath || `./dev-auth-${Date.now()}.json`;
+    const effectiveSourcePath = record.sourcePath;
     
     const id = record.alias.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     const fingerprint = `fp_${Buffer.from(effectiveSourcePath).toString('base64').slice(0, 16)}`;

@@ -93,23 +93,23 @@ export default function App() {
   }, []);
 
   const handleManualSwitch = async () => {
-    const res = await fetch('/api/rotate', { method: 'POST' });
+    const res = await fetch('/api/switch', { method: 'POST' });
     if (res.ok) {
       const data = await res.json();
-      console.log('Rotation successful:', data.selectedId);
+      console.log('Profile switch successful:', data.selectedId);
     } else {
       const err = await res.json();
-      console.error('Rotation failed:', err.error);
+      console.error('Profile switch failed:', err.error);
     }
     // Refresh data to show updated state
     setTimeout(fetchData, 500);
   };
 
   const handleImport = async () => {
-    const alias = prompt('Enter Account Alias:');
+    const alias = prompt('Enter Codex Profile Alias:');
     if (!alias) return;
     const priorityStr = prompt('Enter Priority (default: 1):') || '1';
-    const sourcePath = prompt('Enter Source Path (optional):') || undefined;
+    const sourcePath = prompt('Enter Source Path (required):') || undefined;
     
     const res = await fetch('/api/accounts/import', {
       method: 'POST',
@@ -146,9 +146,9 @@ export default function App() {
             <div className="text-sm">{data ? formatDistanceToNow(new Date(data.runtime.uptimeStart)) : '...'}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase text-[#666]">Bridge Status</div>
+            <div className="text-[10px] uppercase text-[#666]">Backend Status</div>
             <div className={cn("text-sm uppercase", data?.runtime.sessionStatus === 'switching' ? 'text-[#FF9900]' : 'text-[#00FF41]')}>
-              {data?.runtime.sessionStatus === 'switching' ? 'ROTATING' : 'CONNECTED'}
+              {data?.runtime.sessionStatus === 'switching' ? 'SWITCHING' : 'CONNECTED'}
             </div>
           </div>
           <div className="hidden md:block">
@@ -162,7 +162,7 @@ export default function App() {
         {/* Left Column */}
         <section className="col-span-12 lg:col-span-4 flex flex-col gap-6">
           <div className="bg-[#141414] border border-[#333] p-5 rounded-sm relative overflow-hidden">
-            <h2 className="text-[11px] uppercase tracking-[0.2em] text-[#888] mb-4 font-bold">Active Account</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.2em] text-[#888] mb-4 font-bold">Active Codex Profile</h2>
             {activeAccount ? (
               <>
                 <div className="flex items-center gap-4 mb-6">
@@ -175,14 +175,14 @@ export default function App() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 font-mono">
-                  <div className="bg-[#0F0F0F] p-3 border border-[#222]">
-                    <div className="text-[9px] text-[#666] uppercase mb-1">5H Remaining</div>
+                    <div className="bg-[#0F0F0F] p-3 border border-[#222]">
+                    <div className="text-[9px] text-[#666] uppercase mb-1">5H Window Status</div>
                     <div className="text-lg text-[#00FF41]">
                       {activeAccount.health.usage ? `${Math.round((activeAccount.health.usage.five_hour_remaining / activeAccount.health.usage.five_hour_total) * 100)}%` : '--'}
                     </div>
                   </div>
                   <div className="bg-[#0F0F0F] p-3 border border-[#222]">
-                    <div className="text-[9px] text-[#666] uppercase mb-1">Weekly Limit</div>
+                    <div className="text-[9px] text-[#666] uppercase mb-1">Weekly/Plan Status</div>
                     <div className="text-lg text-[#00FF41]">
                       {activeAccount.health.usage ? `${activeAccount.health.usage.weekly_remaining}/${activeAccount.health.usage.weekly_total}` : '--'}
                     </div>
@@ -227,14 +227,14 @@ export default function App() {
                 className="flex flex-col items-center justify-center p-4 bg-[#0F0F0F] border border-[#333] hover:border-[#00FF41]/50 transition-colors group disabled:opacity-30"
              >
                 <RotateCcw className={cn("w-5 h-5 mb-2 text-[#666] group-hover:text-[#00FF41]", data?.runtime.sessionStatus === 'switching' && "animate-spin")} />
-                <span className="text-[10px] font-mono text-[#888] uppercase tracking-[0.1em]">Force Rotate</span>
+                <span className="text-[10px] font-mono text-[#888] uppercase tracking-[0.1em]">Switch Profile</span>
              </button>
              <button 
                 onClick={handleImport}
                 className="flex flex-col items-center justify-center p-4 bg-[#0F0F0F] border border-[#333] hover:border-white/50 transition-colors group"
              >
                 <Plus className="w-5 h-5 mb-2 text-[#666] group-hover:text-white" />
-                <span className="text-[10px] font-mono text-[#888] uppercase tracking-[0.1em]">Import Acc</span>
+                <span className="text-[10px] font-mono text-[#888] uppercase tracking-[0.1em]">Capture Current Login</span>
              </button>
           </div>
         </section>
@@ -246,9 +246,12 @@ export default function App() {
               <span>Alias</span>
               <span>State</span>
               <span className="hidden md:block">Priority</span>
-              <span>Usage</span>
+              <span>Observed Usage</span>
               <span className="hidden md:block">Last Refresh</span>
-              <span>Cooldown</span>
+              <span>Reset / Next Safe Use</span>
+            </div>
+            <div className="px-3 py-2 text-[10px] font-mono border-b border-[#222] bg-[#111] text-[#888]">
+              Usage Confidence: {activeAccount?.health.usage?.confidence ?? 'Unknown'} (Unknown / Observed / Verified / Simulated/Demo)
             </div>
             <div className="overflow-y-auto flex-grow font-mono text-[11px] custom-scrollbar">
               <AnimatePresence mode="popLayout">

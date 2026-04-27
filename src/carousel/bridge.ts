@@ -17,20 +17,8 @@ import { RuntimeStore } from './runtime';
  * Dev/Test implementations may use deterministic mocks.
  */
 export interface IBridgeAdapter {
-  /** Wait for session to be idle before switching */
-  isIdle(): Promise<boolean>;
-  
-  /** Execute auth file switch */
+  /** Execute profile switch outside this service (future phase) */
   switchAuth(nextPath: string): Promise<void>;
-  
-  /** Verify the new identity is actually active */
-  verifyIdentity(expectedId: string): Promise<boolean>;
-  
-  /** Reload session state after switch */
-  reloadSession(): Promise<void>;
-  
-  /** Dispatch resume command to continue work */
-  dispatchResume(payload: any): Promise<void>;
 }
 
 /**
@@ -39,30 +27,8 @@ export interface IBridgeAdapter {
  * NOT suitable for production use.
  */
 export class DevTestAdapter implements IBridgeAdapter {
-  async isIdle(): Promise<boolean> {
-    // In dev/test, always assume idle after brief delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return true;
-  }
-
   async switchAuth(nextPath: string): Promise<void> {
-    logger.log('DevAdapter: Auth switch executed', { path: nextPath });
-    // Simulate switch delay
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-
-  async verifyIdentity(expectedId: string): Promise<boolean> {
-    logger.log('DevAdapter: Identity verified', { expectedId });
-    return true;
-  }
-
-  async reloadSession(): Promise<void> {
-    logger.log('DevAdapter: Session reloaded');
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-
-  async dispatchResume(payload: any): Promise<void> {
-    logger.log('DevAdapter: Resume dispatched', { payload });
+    logger.log('DevAdapter: no-op switchAuth invoked', { path: nextPath });
   }
 }
 
@@ -81,32 +47,12 @@ export class DevTestAdapter implements IBridgeAdapter {
 export class ProductionAdapterStub implements IBridgeAdapter {
   constructor() {
     logger.log('ProductionAdapterStub initialized - DEV MODE ONLY');
-    logger.warn('Production adapter not implemented - using stub');
-  }
-
-  async isIdle(): Promise<boolean> {
-    // STUB: In production, this would check actual editor/process activity
-    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+    logger.log('WARN: Production adapter not implemented - using stub');
   }
 
   async switchAuth(nextPath: string): Promise<void> {
     // STUB: In production, this would securely switch auth credentials
-    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
-  }
-
-  async verifyIdentity(expectedId: string): Promise<boolean> {
-    // STUB: In production, this would verify via Codex API
-    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
-  }
-
-  async reloadSession(): Promise<void> {
-    // STUB: In production, this would reload Codex session
-    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
-  }
-
-  async dispatchResume(payload: any): Promise<void> {
-    // STUB: In production, this would dispatch resume command
-    throw new Error('Production adapter not implemented. Use DevTestAdapter for development.');
+    throw new Error('Production adapter not implemented.');
   }
 }
 
@@ -178,19 +124,7 @@ export class Bridge {
         prevId
       );
 
-      logger.log('Switch sequence started', { from: prevId, to: decision.selectedId, reason: decision.reason });
-
-      // 2. Wait for Idle
-      let attempts = 0;
-      while (!(await this.adapter.isIdle()) && attempts < 30) {
-        logger.log('Waiting for session idle...');
-        await new Promise(r => setTimeout(r, 1000));
-        attempts++;
-      }
-      
-      if (attempts >= 30) {
-        throw new Error('Timeout waiting for idle state');
-      }
+      logger.log('Profile switch sequence started', { from: prevId, to: decision.selectedId, reason });
 
       // 3. Mark current account as Draining
       if (prevId) {
@@ -200,47 +134,31 @@ export class Bridge {
 
       // 4. Checkpoint Ledger BEFORE switch
       const checkpoint = {
-        objective: 'Resuming work after rotation',
+        objective: 'Resume after manual profile switch',
         repoPath: process.cwd(),
         branch: 'main',
         activeAccountId: decision.selectedId,
         previousAccountId: prevId,
-        lastUserIntent: 'Continue development loop',
-        lastCommand: 'npm run dev',
+        lastUserIntent: 'Manual profile switch requested',
+        lastCommand: 'carousel switch',
         filesTouched: [],
         lastPatchResult: 'success',
         lastError: null,
-        switchReason: decision.reason,
+        switchReason: reason,
         nextStep: 'Verify environment stability',
         resumePayload: {},
       };
       await this.ledger.checkpoint(checkpoint);
-      logger.log('Ledger checkpointed before switch', { checkpointId: checkpoint.activeAccountId });
+      logger.log('Ledger checkpointed before profile switch', { checkpointId: checkpoint.activeAccountId });
 
       // 5. Auth Switch
       const nextAcc = this.registry.getAccount(decision.selectedId);
       if (!nextAcc) {
         throw new Error('Selected account not found in registry');
       }
+      // Phase 1 scope lock: do not perform fake identity verification or fake resume dispatch.
+      // Real profile file switching is intentionally deferred to later phases with safety gates.
       await this.adapter.switchAuth(nextAcc.sourcePath);
-
-      // 6. Verification
-      const verified = await this.adapter.verifyIdentity(decision.selectedId);
-      if (!verified) {
-        throw new Error(`Identity verification failed. Expected ${decision.selectedId}`);
-      }
-
-      // 7. Reload Session
-      await this.adapter.reloadSession();
-
-      // 8. Dispatch Resume using ledger payload
-      const ledgerCurrent = this.ledger.getCurrent();
-      if (ledgerCurrent) {
-        logger.log('Dispatching resume with ledger payload', { checkpointId: ledgerCurrent.id });
-        await this.adapter.dispatchResume(ledgerCurrent.resumePayload);
-      } else {
-        logger.log('No ledger checkpoint available for resume');
-      }
 
       // 9. Update Active account
       this.runtimeStore.setPreviousAccount(prevId);
@@ -269,14 +187,14 @@ export class Bridge {
       this.runtimeStore.setLastSwitchAt(new Date().toISOString());
       this.runtimeStore.setSessionStatus('idle');
       
-      logger.log('Switch successful', { id: decision.selectedId });
+      logger.log('Profile switch recorded', { id: decision.selectedId });
       await this.registry.save();
       await this.runtimeStore.save();
       
       return { success: true, selectedId: decision.selectedId };
     } catch (error) {
       this.runtimeStore.setSessionStatus('idle');
-      logger.error('Switch sequence failed', error);
+      logger.error('Profile switch sequence failed', error);
       
       // Attempt rollback: restore previous account to Active if it was draining
       if (prevId) {

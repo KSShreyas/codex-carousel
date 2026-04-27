@@ -40,6 +40,14 @@ export interface UsageSnapshot {
   weekly_remaining: number;
   weekly_total: number;
   timestamp: string;
+  confidence: UsageConfidence;
+}
+
+export enum UsageConfidence {
+  Unknown = 'Unknown',
+  Observed = 'Observed',
+  Verified = 'Verified',
+  SimulatedDemo = 'Simulated/Demo',
 }
 
 export interface AccountRegistryRecord {
@@ -144,6 +152,7 @@ export interface AppConfig {
   uiRefreshIntervalMs: number;
   bridgeReloadTimeoutMs: number;
   ledgerRetentionCount: number;
+  demoMode: boolean;
 }
 
 export interface SelectionDecision {

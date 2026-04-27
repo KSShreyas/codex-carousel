@@ -10,7 +10,7 @@ const API_BASE = 'http://localhost:3000/api';
 
 program
   .name('carousel')
-  .description('Codex Carousel Operator CLI')
+  .description('Codex Carousel Manual Profile Switcher CLI')
   .version('1.0.0');
 
 program.command('status')
@@ -20,7 +20,7 @@ program.command('status')
       const res = await fetch(`${API_BASE}/status`);
       const data = await res.json() as any;
       console.log('--- CODEX CAROUSEL STATUS ---');
-      console.log(`Active: ${data.runtime.activeAccountId || 'None'}`);
+      console.log(`Active Codex Profile: ${data.runtime.activeAccountId || 'None'}`);
       console.log(`Uptime: ${data.runtime.uptimeStart}`);
       console.log(`Accounts: ${data.accounts.length}`);
       data.accounts.forEach((a: any) => {
@@ -31,21 +31,21 @@ program.command('status')
     }
   });
 
-program.command('rotate')
-  .description('Trigger manual account rotation')
+program.command('switch')
+  .description('Trigger explicit manual Codex Profile switch')
   .action(async () => {
-    const res = await fetch(`${API_BASE}/rotate`, { method: 'POST' });
+    const res = await fetch(`${API_BASE}/switch`, { method: 'POST' });
     if (res.ok) {
       const data = await res.json();
-      console.log(`Rotation successful. Selected: ${data.selectedId || 'N/A'}`);
+      console.log(`Profile switch recorded. Selected: ${data.selectedId || 'N/A'}`);
     } else {
       const err = await res.json();
-      console.error(`Rotation failed: ${err.error}`);
+      console.error(`Profile switch failed: ${err.error}`);
     }
   });
 
 program.command('import <alias>')
-  .description('Import a new account')
+  .description('Capture a Codex Profile by explicit local source path')
   .option('-p, --priority <number>', 'Account priority', '1')
   .option('-s, --source <path>', 'Source path for auth file')
   .action(async (alias, options) => {
@@ -68,7 +68,7 @@ program.command('import <alias>')
   });
 
 program.command('list')
-  .description('List all accounts in pool')
+  .description('List all captured Codex Profiles')
   .action(async () => {
     const res = await fetch(`${API_BASE}/status`);
     const data = await res.json() as any;
@@ -76,7 +76,7 @@ program.command('list')
       Alias: a.alias,
       ID: a.id,
       State: a.health.state,
-      Usage: a.health.usage ? `${a.health.usage.five_hour_remaining}u` : '--'
+      'Observed Usage': a.health.usage ? `${a.health.usage.five_hour_remaining}u` : '--'
     })));
   });
 
@@ -124,4 +124,3 @@ program.command('doctor')
   });
 
 program.parse();
-
