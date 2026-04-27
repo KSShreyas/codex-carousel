@@ -26,10 +26,14 @@ export const ConfigSchema = z.object({
   uiRefreshIntervalMs: z.number().default(2000),
   bridgeReloadTimeoutMs: z.number().default(10000),
   ledgerRetentionCount: z.number().default(50),
+  demoMode: z.boolean().default(false),
 });
 
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
-  const result = ConfigSchema.parse(overrides);
+  const result = ConfigSchema.parse({
+    demoMode: process.env.CAROUSEL_DEMO_MODE === 'true',
+    ...overrides,
+  });
   
   // Resolve paths
   return {

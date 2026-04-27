@@ -6,122 +6,162 @@
 import { Command } from 'commander';
 
 const program = new Command();
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = 'http://127.0.0.1:3000/api';
 
 program
   .name('carousel')
-  .description('Codex Carousel Operator CLI')
-  .version('1.0.0');
+  .description('Codex Carousel Manual Profile Switcher CLI')
+  .version('3.0.0')
+  .option('--json', 'Output JSON');
 
-program.command('status')
-  .description('Show current supervisor status')
-  .action(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/status`);
-      const data = await res.json() as any;
-      console.log('--- CODEX CAROUSEL STATUS ---');
-      console.log(`Active: ${data.runtime.activeAccountId || 'None'}`);
-      console.log(`Uptime: ${data.runtime.uptimeStart}`);
-      console.log(`Accounts: ${data.accounts.length}`);
-      data.accounts.forEach((a: any) => {
-        console.log(`[${a.health.state}] ${a.alias} (${a.id})`);
-      });
-    } catch (e) {
-      console.error('Failed to connect to supervisor');
-    }
+function print(programRef: Command, data: any, humanRenderer?: (payload: any) => void) {
+  if (programRef.opts().json || !humanRenderer) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  humanRenderer(data);
+}
+
+async function call(path: string, init?: RequestInit) {
+  const res = await fetch(`${API_BASE}${path}`, init);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
+program.command('status').action(async () => {
+  const data = await call('/status');
+  print(program, data, (s) => {
+    console.log('=== CODEX CAROUSEL STATUS ===');
+    console.log(`Active Profile: ${s.runtime?.activeProfileId ?? 'None'}`);
+    console.log(`Profiles: ${s.profiles?.length ?? 0}`);
+    console.log(`Ledger Events: ${s.ledger?.length ?? 0}`);
   });
+});
 
-program.command('rotate')
-  .description('Trigger manual account rotation')
-  .action(async () => {
-    const res = await fetch(`${API_BASE}/rotate`, { method: 'POST' });
-    if (res.ok) {
-      const data = await res.json();
-      console.log(`Rotation successful. Selected: ${data.selectedId || 'N/A'}`);
-    } else {
-      const err = await res.json();
-      console.error(`Rotation failed: ${err.error}`);
-    }
-  });
-
-program.command('import <alias>')
-  .description('Import a new account')
-  .option('-p, --priority <number>', 'Account priority', '1')
-  .option('-s, --source <path>', 'Source path for auth file')
-  .action(async (alias, options) => {
-    const res = await fetch(`${API_BASE}/accounts/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        alias, 
-        priority: parseInt(options.priority),
-        sourcePath: options.source
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      console.log(`Imported ${alias} as ${data.id}`);
-    } else {
-      const err = await res.json();
-      console.error(`Import failed: ${err.error}`);
-    }
-  });
-
-program.command('list')
-  .description('List all accounts in pool')
-  .action(async () => {
-    const res = await fetch(`${API_BASE}/status`);
-    const data = await res.json() as any;
-    console.table(data.accounts.map((a: any) => ({
-      Alias: a.alias,
-      ID: a.id,
-      State: a.health.state,
-      Usage: a.health.usage ? `${a.health.usage.five_hour_remaining}u` : '--'
+const profiles = program.command('profiles').description('Profile management');
+profiles.command('list').action(async () => {
+  const data = await call('/profiles');
+  print(program, data, (rows) => {
+    console.table(rows.map((p: any) => ({
+      ID: p.id,
+      Alias: p.alias,
+      Plan: p.plan,
+      Priority: p.priority,
+      Recommendation: p.recommendation,
     })));
   });
+});
 
-program.command('suspend <id>')
-  .description('Suspend an account')
-  .option('-r, --reason <string>', 'Reason for suspension')
-  .action(async (id, options) => {
-    const res = await fetch(`${API_BASE}/accounts/${id}/suspend`, {
+profiles.command('create')
+  .requiredOption('--alias <alias>')
+  .option('--plan <plan>', 'Plus|Pro100|Pro200|Unknown', 'Plus')
+  .option('--priority <priority>', 'Priority', '1')
+  .option('--snapshot-path <snapshotPath>')
+  .action(async (options) => {
+    const data = await call('/profiles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: options.reason })
+      body: JSON.stringify({
+        alias: options.alias,
+        plan: options.plan,
+        priority: Number.parseInt(options.priority, 10),
+        snapshotPath: options.snapshotPath ?? null,
+      }),
     });
-    if (res.ok) console.log(`Account ${id} suspended`);
+
+    print(program, data, (p) => {
+      console.log(`Created profile ${p.alias} (${p.id})`);
+    });
   });
 
-program.command('reactivate <id>')
-  .description('Reactivate a suspended or cooling account')
-  .action(async (id) => {
-    const res = await fetch(`${API_BASE}/accounts/${id}/reactivate`, { method: 'POST' });
-    if (res.ok) console.log(`Account ${id} reactivated`);
+profiles.command('update <id>')
+  .option('--alias <alias>')
+  .option('--plan <plan>')
+  .option('--priority <priority>')
+  .option('--verification-status <verificationStatus>')
+  .option('--snapshot-status <snapshotStatus>')
+  .option('--notes <notes>')
+  .action(async (id, options) => {
+    const payload: Record<string, any> = {};
+    if (options.alias !== undefined) payload.alias = options.alias;
+    if (options.plan !== undefined) payload.plan = options.plan;
+    if (options.priority !== undefined) payload.priority = Number.parseInt(options.priority, 10);
+    if (options.verificationStatus !== undefined) payload.verificationStatus = options.verificationStatus;
+    if (options.snapshotStatus !== undefined) payload.snapshotStatus = options.snapshotStatus;
+    if (options.notes !== undefined) payload.notes = options.notes;
+
+    const data = await call(`/profiles/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    print(program, data, (p) => {
+      console.log(`Updated profile ${p.id}`);
+    });
   });
 
-program.command('disable <id>')
-  .description('Disable account (manual lock)')
-  .action(async (id) => {
-    const res = await fetch(`${API_BASE}/accounts/${id}/toggle`, { method: 'POST' });
-    if (res.ok) console.log(`Account status toggled`);
+const usage = program.command('usage').description('Observed usage snapshots');
+usage.command('update <profileId>')
+  .requiredOption('--five-hour <status>')
+  .requiredOption('--weekly <status>')
+  .requiredOption('--credits <status>')
+  .option('--observed-reset-at <datetime>')
+  .option('--last-limit-banner <banner>')
+  .option('--notes <notes>')
+  .option('--source <source>', 'Manual|CodexBanner|UsageDashboard|Unknown', 'Manual')
+  .action(async (profileId, options) => {
+    const data = await call(`/profiles/${profileId}/usage-snapshots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fiveHourStatus: options.fiveHour,
+        weeklyStatus: options.weekly,
+        creditsStatus: options.credits,
+        observedResetAt: options.observedResetAt ?? null,
+        lastLimitBanner: options.lastLimitBanner ?? null,
+        notes: options.notes ?? null,
+        source: options.source,
+      }),
+    });
+
+    print(program, data, (s) => {
+      console.log(`Saved usage snapshot ${s.id} for ${s.profileId}`);
+    });
   });
 
-program.command('ledger')
-  .description('Show current durable ledger status')
-  .action(async () => {
-    const res = await fetch(`${API_BASE}/ledger`);
-    const data = await res.json() as any;
-    console.log(JSON.stringify(data, null, 2));
+program.command('recommend').action(async () => {
+  const data = await call('/recommendations/recompute', { method: 'POST' });
+  print(program, data, (r) => {
+    console.log(`Active recommendation: ${r.summary?.activeRecommendation ?? 'Unknown'}`);
   });
+});
 
-program.command('doctor')
-  .description('Run system diagnostics')
-  .action(async () => {
-    const res = await fetch(`${API_BASE}/doctor`);
-    const data = await res.json() as any;
-    console.log(`Status: ${data.status}`);
-    data.issues.forEach((i: string) => console.log(`[!] ${i}`));
+program.command('ledger').action(async () => {
+  const data = await call('/ledger');
+  print(program, data, (entries) => {
+    console.table(entries.slice(0, 20).map((e: any) => ({
+      Time: e.timestamp,
+      Event: e.eventType,
+      Severity: e.severity,
+      Message: e.message,
+    })));
   });
+});
+
+program.command('doctor').action(async () => {
+  const data = await call('/doctor');
+  print(program, data, (d) => {
+    console.log(`Doctor status: ${d.status}`);
+    if (d.issues?.length) {
+      d.issues.forEach((i: string) => console.log(` - ${i}`));
+    } else {
+      console.log('No issues detected.');
+    }
+  });
+});
 
 program.parse();
-

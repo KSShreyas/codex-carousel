@@ -1,20 +1,51 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Codex Carousel (V1 Scope)
 
-# Run and deploy your AI Studio app
+Codex Carousel is a **local, manual, explicit Codex Profile switcher** for users with multiple legitimate ChatGPT-login Codex profiles.
 
-This contains everything you need to run your app locally.
+## V1 principles
 
-View your app in AI Studio: https://ai.studio/apps/0e10dbcd-5cb5-461a-8d2c-7ff21567af6c
+- Codex-only (no multi-provider routing).
+- Manual profile switching only.
+- No automatic account/profile cycling.
+- No quota bypassing behavior.
+- No hidden switching.
+- Backend is the source of truth for local state.
 
-## Run Locally
+## Current status
 
-**Prerequisites:**  Node.js
+This repository is in a scope-reset phase.
 
+- ✅ Local backend + CLI + UI exist.
+- ✅ Durable local registry/runtime/ledger persistence exists.
+- ⚠️ Real Windows profile file switching is **not implemented yet**.
+- ⚠️ Production-ready live profile switching is deferred until dry-run + rollback safety are implemented.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Run locally
+
+Prerequisites: Node.js 20+
+
+```bash
+npm install
+npm run dev
+```
+
+Server starts on `http://localhost:3000` and serves both API and UI.
+
+## Useful commands
+
+```bash
+npm run lint
+npm test
+```
+
+## Demo mode
+
+Demo mode is **off by default**.
+
+Set:
+
+```bash
+CAROUSEL_DEMO_MODE=true
+```
+
+Only then may demo profile data be seeded.

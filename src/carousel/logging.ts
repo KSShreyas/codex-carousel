@@ -29,6 +29,10 @@ export class Logger {
     }
   }
 
+  setLogFile(filePath: string) {
+    this.logFile = filePath;
+  }
+
   log(event: string, context: Record<string, any> = {}) {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
