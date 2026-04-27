@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "profiles": [],
+  "usageSnapshots": [],
+  "switchEvents": [],
+  "settings": {
+    "schemaVersion": 2,
+    "activeProfileId": null,
+    "demoMode": false,
+    "localSwitchingEnabled": true,
+    "codexProfileRootPath": null,
+    "codexLaunchCommand": null,
+    "requireCodexClosedBeforeSwitch": true,
+    "allowProcessStop": false,
+    "autoLaunchAfterSwitch": false,
+    "redactSensitivePathsInLogs": true
+  },
+  "profileSnapshotMetadata": {}
+}
