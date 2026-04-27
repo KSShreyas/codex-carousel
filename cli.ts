@@ -104,6 +104,23 @@ profiles.command('update <id>')
     });
   });
 
+
+profiles.command('capture-current')
+  .requiredOption('--alias <alias>')
+  .requiredOption('--plan <plan>', 'Plus|Pro100|Pro200|Unknown')
+  .action(async (options) => {
+    const data = await call('/profiles/capture-current', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alias: options.alias, plan: options.plan }),
+    });
+
+    print(program, data, (r) => {
+      console.log(`Captured current login into profile ${r.profile?.id}`);
+      console.log(`Snapshot files: ${r.capture?.fileCount ?? 0}`);
+    });
+  });
+
 const usage = program.command('usage').description('Observed usage snapshots');
 usage.command('update <profileId>')
   .requiredOption('--five-hour <status>')
@@ -152,6 +169,13 @@ program.command('ledger').action(async () => {
   });
 });
 
+program.command('launch').action(async () => {
+  const data = await call('/codex/launch', { method: 'POST' });
+  print(program, data, (d) => {
+    console.log(`Launch requested using command: ${d.command}`);
+  });
+});
+
 program.command('doctor').action(async () => {
   const data = await call('/doctor');
   print(program, data, (d) => {
@@ -163,5 +187,82 @@ program.command('doctor').action(async () => {
     }
   });
 });
+
+
+const switchCmd = program.command('switch').description('Profile switch dry-run and lock operations');
+
+switchCmd.command('dry-run <profileId>')
+  .option('--fixture-root-dir <fixtureRootDir>')
+  .action(async (profileId, options) => {
+    const data = await call(`/profiles/${profileId}/switch/dry-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fixtureRootDir: options.fixtureRootDir ?? null,
+      }),
+    });
+
+    print(program, data, (r) => {
+      console.log('=== SWITCH DRY-RUN ===');
+      console.log(`Source Active Profile: ${r.sourceActiveProfileId ?? 'None'}`);
+      console.log(`Target Profile: ${r.targetProfileId}`);
+      console.log(`Backup Plan Entries: ${r.backupPlan?.length ?? 0}`);
+      console.log(`Restore Plan Entries: ${r.restorePlan?.length ?? 0}`);
+      if (r.warnings?.length) {
+        console.log('Warnings:');
+        for (const warning of r.warnings) console.log(` - ${warning}`);
+      }
+    });
+  });
+
+switchCmd.command('status').action(async () => {
+  const data = await call('/switch/status');
+  print(program, data, (status) => {
+    console.log('=== SWITCH STATUS ===');
+    console.log(`Locked: ${status.locked ? 'Yes' : 'No'}`);
+    console.log(`Stale: ${status.stale ? 'Yes' : 'No'}`);
+    if (status.lock) {
+      console.log(`Lock ID: ${status.lock.id}`);
+      console.log(`Created At: ${status.lock.createdAt}`);
+      console.log(`Target Profile: ${status.lock.targetProfileId}`);
+    }
+  });
+});
+
+switchCmd.command('clear-lock')
+  .requiredOption('--confirm', 'Required confirmation flag')
+  .action(async () => {
+    const data = await call('/switch/lock/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+
+    print(program, data, (r) => {
+      console.log(r.cleared ? 'Switch lock cleared.' : `Switch lock not cleared: ${r.reason}`);
+    });
+  });
+
+switchCmd.command('<profileOrAlias>')
+  .requiredOption('--confirm', 'Explicit confirmation required for real switch')
+  .option('--fixture-root-dir <fixtureRootDir>')
+  .action(async (profileOrAlias, options) => {
+    const profiles = await call('/profiles');
+    const match = profiles.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
+    if (!match) {
+      throw new Error(`Profile not found for: ${profileOrAlias}`);
+    }
+
+    const data = await call(`/profiles/${match.id}/switch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true, fixtureRootDir: options.fixtureRootDir ?? null }),
+    });
+
+    print(program, data, (r) => {
+      console.log(`Switch success. Active profile: ${r.activeProfileId}`);
+      console.log(`Verification: ${r.verification}`);
+    });
+  });
 
 program.parse();

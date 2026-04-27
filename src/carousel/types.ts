@@ -187,6 +187,7 @@ export enum SnapshotStatus {
 export enum VerificationStatus {
   Verified = 'Verified',
   Unverified = 'Unverified',
+  VerifyUnavailable = 'VerifyUnavailable',
   Failed = 'Failed',
   Unknown = 'Unknown',
 }
@@ -260,6 +261,7 @@ export enum SwitchEventType {
   SWITCH_STARTED = 'SWITCH_STARTED',
   SWITCH_DRY_RUN_STARTED = 'SWITCH_DRY_RUN_STARTED',
   SWITCH_DRY_RUN_COMPLETED = 'SWITCH_DRY_RUN_COMPLETED',
+  SWITCH_DRY_RUN_FAILED = 'SWITCH_DRY_RUN_FAILED',
   ACTIVE_PROFILE_BACKED_UP = 'ACTIVE_PROFILE_BACKED_UP',
   TARGET_PROFILE_RESTORED = 'TARGET_PROFILE_RESTORED',
   CODEX_LAUNCH_REQUESTED = 'CODEX_LAUNCH_REQUESTED',
@@ -289,4 +291,11 @@ export interface AppSettingsV2 {
   schemaVersion: number;
   activeProfileId: string | null;
   demoMode: boolean;
+  localSwitchingEnabled: boolean;
+  codexProfileRootPath: string | null;
+  codexLaunchCommand: string | null;
+  requireCodexClosedBeforeSwitch: boolean;
+  allowProcessStop: boolean;
+  autoLaunchAfterSwitch: boolean;
+  redactSensitivePathsInLogs: boolean;
 }
