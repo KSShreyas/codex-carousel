@@ -20,6 +20,7 @@ type Profile = {
   recommendation: string;
   recommendationReason: string | null;
   lastActivatedAt: string | null;
+  snapshotStatus?: string;
 };
 
 type LedgerEvent = {
@@ -49,6 +50,19 @@ type Settings = {
   requireCodexClosedBeforeSwitch: boolean;
 };
 
+type UsageSnapshot = {
+  id: string;
+  createdAt: string;
+  source: string;
+  fiveHourStatus: string;
+  weeklyStatus: string;
+  creditsStatus: string;
+  observedResetAt: string | null;
+  notes: string | null;
+};
+
+const STATE_LABELS = ['Unknown', 'Observed', 'Verified', 'Unverified', 'Failed', 'Dry-run only', 'Local switching disabled', 'Switch requires confirmation'];
+
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -62,6 +76,8 @@ export default function App() {
   const [switchDryRun, setSwitchDryRun] = useState<any | null>(null);
   const [switchLoading, setSwitchLoading] = useState(false);
   const [switchConfirm, setSwitchConfirm] = useState(false);
+  const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [usageModalData, setUsageModalData] = useState<UsageSnapshot[]>([]);
 
   const [captureForm, setCaptureForm] = useState({ alias: '', plan: 'Plus' });
 
@@ -139,6 +155,14 @@ export default function App() {
     await load();
   };
 
+  const openUsageModal = async () => {
+    if (!activeProfileId) return;
+    const res = await fetch(`/api/profiles/${activeProfileId}/usage-snapshots`);
+    const data = await res.json();
+    setUsageModalData(data ?? []);
+    setUsageModalOpen(true);
+  };
+
   const captureCurrent = async () => {
     await fetch('/api/profiles/capture-current', {
       method: 'POST',
@@ -187,32 +211,59 @@ export default function App() {
 
   return (
     <div className="p-6 text-white bg-black min-h-screen">
-      <h1 className="text-2xl mb-4">Codex Carousel</h1>
+      <h1 className="text-2xl mb-4">Codex Carousel V1.0</h1>
       {error && <div className="text-red-400 mb-4">{error}</div>}
 
-      <section className="mb-6 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Local Switching Settings</h2>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <label className="col-span-2">
-            <input
-              type="checkbox"
-              checked={settings?.localSwitchingEnabled ?? false}
-              onChange={(e) => saveSettings({ localSwitchingEnabled: e.target.checked })}
-            />{' '}
-            Local Switching Enabled
-          </label>
-          <label>Codex profile root path
-            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexProfileRootPath ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexProfileRootPath: e.target.value } : s)} />
-          </label>
-          <label>Codex launch command
-            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexLaunchCommand ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexLaunchCommand: e.target.value } : s)} />
-          </label>
-          <button className="px-3 py-1 border border-blue-500 col-span-2" onClick={() => saveSettings({ codexProfileRootPath: settings?.codexProfileRootPath ?? null, codexLaunchCommand: settings?.codexLaunchCommand ?? null })}>Save Settings</button>
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Backend Status</h2>
+        <div className="text-sm grid grid-cols-2 gap-2">
+          <div><strong>API Reachable:</strong> {health?.ok ? 'Verified' : 'Failed'}</div>
+          <div><strong>Storage Status:</strong> {health?.storageStatus ?? 'Unknown'}</div>
+          <div><strong>Ledger Writable:</strong> {health?.ledgerWritable ? 'Verified' : 'Failed'}</div>
+          <div><strong>Demo Mode:</strong> {health?.demoMode ? 'Observed' : 'Off by default'}</div>
         </div>
-        <button className="mt-3 px-3 py-1 border border-green-500" onClick={launchCodex}>Launch Codex</button>
       </section>
 
-      <section className="mb-6 border border-gray-700 p-4">
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Active Profile Card</h2>
+        {active ? (
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div><strong>Alias:</strong> {active.alias}</div>
+            <div><strong>Plan/Capacity Card:</strong> {active.plan}</div>
+            <div><strong>5H Window Status:</strong> {active.fiveHourStatus}</div>
+            <div><strong>Weekly/Plan Status:</strong> {active.weeklyStatus}</div>
+            <div><strong>Credits Status:</strong> {active.creditsStatus}</div>
+            <div><strong>Verification:</strong> {active.verificationStatus}</div>
+            <div><strong>Recommendation:</strong> {active.recommendationReason ?? 'No recommendation because usage status is unknown'}</div>
+            <div><strong>Last Activated:</strong> {active.lastActivatedAt ?? 'Unknown'}</div>
+          </div>
+        ) : <div className="text-sm">Unknown</div>}
+      </section>
+
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">State Labels</h2>
+        <div className="text-xs text-gray-300">{STATE_LABELS.join(' • ')}</div>
+      </section>
+
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Profile Table</h2>
+        <div className="space-y-2">
+          {profiles.map((p) => (
+            <div key={p.id} className="border border-gray-800 p-2 flex items-center justify-between text-sm">
+              <div>
+                <div>{p.alias} ({p.plan})</div>
+                <div className="text-xs text-gray-400">Verification {p.verificationStatus} • Snapshot {p.snapshotStatus ?? 'Unknown'}</div>
+              </div>
+              <div className="flex gap-2">
+                <button className="px-3 py-1 border border-blue-600" onClick={() => runSwitchDryRun(p.id)}>Dry-run switch</button>
+                <button className="px-3 py-1 border border-green-600" onClick={() => { setSwitchTarget(p); setSwitchDryRun(null); setSwitchConfirm(false); }}>Switch profile</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-4 border border-gray-700 p-4">
         <h2 className="font-bold mb-2">Capture Current Login</h2>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <label>Alias
@@ -223,86 +274,44 @@ export default function App() {
               <option>Plus</option><option>Pro100</option><option>Pro200</option><option>Unknown</option>
             </select>
           </label>
-          <button className="px-3 py-1 border border-green-600 col-span-2" onClick={captureCurrent}>Capture Current Login</button>
-        </div>
-      </section>
-
-      <section className="mb-6 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Backend Connection Status</h2>
-        <div className="text-sm">
-          <div><strong>API Reachable:</strong> {health?.ok ? 'Yes' : 'No'}</div>
-          <div><strong>Storage Status:</strong> {health?.storageStatus ?? 'Unknown'}</div>
-          <div><strong>Last Event:</strong> {health?.lastEventTimestamp ?? 'Unknown'}</div>
-        </div>
-        {doctor && doctor.status !== 'healthy' && (
-          <div className="mt-3 text-yellow-300">
-            <strong>Doctor Warnings:</strong>
-            <ul className="list-disc list-inside">{doctor.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
-          </div>
-        )}
-      </section>
-
-      <section className="mb-6 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Active Codex Profile</h2>
-        {active ? (
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><strong>Alias:</strong> {active.alias}</div>
-            <div><strong>Plan:</strong> {active.plan}</div>
-            <div><strong>Verification Status:</strong> {active.verificationStatus}</div>
-            <div><strong>5H Window Status:</strong> {active.fiveHourStatus}</div>
-            <div><strong>Weekly/Plan Status:</strong> {active.weeklyStatus}</div>
-            <div><strong>Credits Status:</strong> {active.creditsStatus}</div>
-            <div><strong>Reset / Next Safe Use:</strong> {active.observedResetAt ?? 'Unknown'}</div>
-            <div><strong>Last Usage Snapshot:</strong> {active.lastActivatedAt ?? 'Unknown'}</div>
-            <div className="col-span-2"><strong>Recommendation:</strong> {active.recommendation} — {active.recommendationReason ?? 'Unknown'}</div>
-          </div>
-        ) : <div>Unknown</div>}
-        {active?.verificationStatus === 'VerifyUnavailable' && <div className="text-yellow-300 mt-2">Local profile restored, identity not verified</div>}
-      </section>
-
-      <section className="mb-6 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Profiles</h2>
-        <div className="space-y-2">
-          {profiles.map((p) => (
-            <div key={p.id} className="border border-gray-800 p-2 flex items-center justify-between">
-              <div>
-                <div>{p.alias} ({p.plan})</div>
-                <div className="text-xs text-gray-400">Verification: {p.verificationStatus}</div>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-3 py-1 border border-blue-600" onClick={() => runSwitchDryRun(p.id)}>Dry Run</button>
-                <button className="px-3 py-1 border border-green-600" onClick={() => { setSwitchTarget(p); setSwitchDryRun(null); setSwitchConfirm(false); }}>Switch Profile</button>
-              </div>
-            </div>
-          ))}
+          <button className="px-3 py-1 border border-green-600 col-span-2" onClick={captureCurrent}>Capture current login</button>
         </div>
       </section>
 
       {switchTarget && (
-        <section className="mb-6 border border-yellow-600 p-4">
-          <h2 className="font-bold mb-2">Switch Profile Confirmation</h2>
-          <div className="text-sm">
-            <div><strong>Source active profile:</strong> {active?.alias ?? 'None'}</div>
-            <div><strong>Target profile:</strong> {switchTarget.alias}</div>
-          </div>
-          <button className="mt-2 px-3 py-1 border border-blue-500" onClick={() => runSwitchDryRun(switchTarget.id)} disabled={switchLoading}>{switchLoading ? 'Running Dry Run...' : 'Dry Run'}</button>
+        <section className="mb-4 border border-yellow-600 p-4">
+          <h2 className="font-bold mb-2">Switch Profile</h2>
+          <div className="text-sm">Switch requires confirmation. {settings?.localSwitchingEnabled ? 'Observed' : 'Local switching disabled'}</div>
+          <button className="mt-2 px-3 py-1 border border-blue-500" onClick={() => runSwitchDryRun(switchTarget.id)} disabled={switchLoading}>{switchLoading ? 'Running dry-run...' : 'Dry-run switch'}</button>
           {switchDryRun && (
             <div className="mt-2 text-sm">
+              <div><strong>Dry-run result:</strong> {switchDryRun.dryRun ? 'Dry-run only' : 'Failed'}</div>
               <div><strong>Verification status:</strong> {switchDryRun.verification?.targetProfile ?? 'Unknown'}</div>
-              <div><strong>Files that would be backed up:</strong> {(switchDryRun.backupPlan ?? []).length}</div>
-              <div><strong>Files that would be restored:</strong> {(switchDryRun.restorePlan ?? []).length}</div>
-              <div><strong>Warnings:</strong> {(switchDryRun.warnings ?? []).join(' | ') || 'None'}</div>
-              <div><strong>Dry-run result:</strong> {switchDryRun.dryRun ? 'Completed' : 'Failed'}</div>
+              <div><strong>Warnings:</strong> {(switchDryRun.warnings ?? []).join(' | ') || 'Unknown'}</div>
             </div>
           )}
-          <label className="block mt-3">
-            <input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} /> Confirm real switch
-          </label>
-          <button className="mt-2 px-3 py-1 border border-red-500" onClick={runRealSwitch} disabled={!switchConfirm}>Switch Profile</button>
+          <label className="block mt-3"><input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} /> Confirm real switch</label>
+          <button className="mt-2 px-3 py-1 border border-red-500" onClick={runRealSwitch} disabled={!switchConfirm}>Switch profile</button>
         </section>
       )}
 
-      <section className="mb-6 border border-gray-700 p-4">
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Usage Snapshot Modal</h2>
+        <button className="px-3 py-1 border border-blue-500" onClick={openUsageModal} disabled={!activeProfileId}>Open usage snapshot modal</button>
+      </section>
+
+      {usageModalOpen && (
+        <section className="mb-4 border border-blue-700 p-4 text-sm">
+          <h3 className="font-bold">Usage Snapshot Modal</h3>
+          <button className="mb-2 px-2 py-1 border border-gray-600" onClick={() => setUsageModalOpen(false)}>Close</button>
+          <div className="max-h-40 overflow-auto">
+            {usageModalData.map((s) => <div key={s.id} className="border-b border-gray-800 py-1">{s.createdAt} • {s.fiveHourStatus}/{s.weeklyStatus}/{s.creditsStatus} • {s.source}</div>)}
+            {usageModalData.length === 0 && <div>Unknown</div>}
+          </div>
+        </section>
+      )}
+
+      <section className="mb-4 border border-gray-700 p-4">
         <h2 className="font-bold mb-2">Manual Usage Snapshot</h2>
         <form onSubmit={submitUsage} className="grid grid-cols-2 gap-2 text-sm">
           <label>Profile
@@ -320,13 +329,32 @@ export default function App() {
         </form>
       </section>
 
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Settings Panel</h2>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <label className="col-span-2"><input type="checkbox" checked={settings?.localSwitchingEnabled ?? false} onChange={(e) => saveSettings({ localSwitchingEnabled: e.target.checked })} /> Local switching enabled</label>
+          <label>Codex profile root path
+            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexProfileRootPath ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexProfileRootPath: e.target.value } : s)} />
+          </label>
+          <label>Codex launch command
+            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexLaunchCommand ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexLaunchCommand: e.target.value } : s)} />
+          </label>
+          <button className="px-3 py-1 border border-blue-500 col-span-2" onClick={() => saveSettings({ codexProfileRootPath: settings?.codexProfileRootPath ?? null, codexLaunchCommand: settings?.codexLaunchCommand ?? null })}>Save settings</button>
+        </div>
+        <button className="mt-3 px-3 py-1 border border-green-500" onClick={launchCodex}>Launch Codex</button>
+      </section>
+
+      <section className="mb-4 border border-gray-700 p-4">
+        <h2 className="font-bold mb-2">Doctor Panel</h2>
+        <div className="text-sm">Status: {doctor?.status ?? 'Unknown'}</div>
+        {doctor && doctor.issues.length > 0 && <ul className="list-disc list-inside text-yellow-300">{doctor.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+      </section>
+
       <section className="border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Event Ledger / Switch History / Rollback Status</h2>
+        <h2 className="font-bold mb-2">Event Ledger</h2>
         <div className="max-h-64 overflow-auto text-xs space-y-1">
           {ledger.map((evt) => (
-            <div key={evt.id} className="border-b border-gray-800 pb-1">
-              <strong>{evt.eventType}</strong> [{evt.severity}] — {evt.message}
-            </div>
+            <div key={evt.id} className="border-b border-gray-800 pb-1"><strong>{evt.eventType}</strong> [{evt.severity}] — {evt.message}</div>
           ))}
         </div>
       </section>
