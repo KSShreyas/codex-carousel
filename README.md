@@ -1,28 +1,25 @@
 # Codex Carousel V1.0
 
-Codex Carousel is a local-first operator tool for managing multiple **legitimate ChatGPT-login Codex profiles** with explicit, manual switching.
+Codex Carousel is a local-first operator console for managing multiple **legitimate ChatGPT-login Codex profiles** with explicit, manual switching.
 
-## What this app is
+## Core guarantees
 
-- A backend-owned durable state system for profiles, usage snapshots, settings, and switch ledger.
-- A UI + CLI that both operate on the same backend API truth.
-- A safety-gated switching workflow with dry-run, explicit confirmation, lock handling, and rollback.
+- Durable backend store is the source of truth.
+- Safety gates remain enforced: dry-run + explicit confirmation + local switching toggle.
+- No auto-switching, no provider routing, no API-key flows.
+- No fake usage values or fake identity verification.
+- Raw auth/session contents are not exposed in API/UI/CLI logs.
 
-## What this app is not
+## UI (Phase 7)
 
-- Not an automatic quota rotator.
-- Not a limit bypass tool.
-- Not an API-key manager.
-- Not a multi-provider router.
-- Not an identity-forging or fake verification tool.
+The dashboard is restored to a production-style operator console:
+- dark cyberpunk layout
+- active profile/recommendation/usage/settings cards
+- profile table + capture/switch controls
+- event ledger
+- doctor/safety status footer
 
-## V1 scope
-
-- Codex-only workflow.
-- Manual profile capture and manual usage snapshots.
-- Dry-run before real switch.
-- Real switch disabled by default (`localSwitchingEnabled=false`).
-- Verification is honest: `VerifyUnavailable` is used when automated verification is not safely available.
+See `docs/UI_ACCEPTANCE_CHECKLIST.md`.
 
 ## Install
 
@@ -30,106 +27,54 @@ Codex Carousel is a local-first operator tool for managing multiple **legitimate
 npm install
 ```
 
-## Run backend
+## Run
 
 ```bash
 npm run dev
 ```
 
-Backend default: `http://127.0.0.1:3000`.
+Backend/UI default: `http://127.0.0.1:3000`.
 
-## Run frontend
-
-The Vite frontend is served by the same dev server at `http://127.0.0.1:3000`.
-
-## CLI usage
+## CLI quick usage
 
 ```bash
 npx tsx cli.ts status
-npx tsx cli.ts profiles list
 npx tsx cli.ts doctor
-```
-
-## Profile capture
-
-```bash
-npx tsx cli.ts profiles capture-current --alias "Profile A" --plan Plus
-```
-
-## Dry-run switch
-
-```bash
 npx tsx cli.ts switch dry-run <profileId>
+npx tsx cli.ts switch run <profileId-or-alias> --confirm
 ```
 
-## Real switch
-
-Requires explicit confirmation and local switching enabled:
+Compatibility path (also supported):
 
 ```bash
-npx tsx cli.ts switch <profileId> --confirm
+npx tsx cli.ts switch <profileId-or-alias> --confirm
 ```
 
-## Launch Codex
+Windows fallback:
+
+```powershell
+npx.cmd tsx cli.ts switch <profileId-or-alias> --confirm
+node .\node_modules\tsx\dist\cli.mjs cli.ts switch <profileId-or-alias> --confirm
+```
+
+## V1 completion honesty
+
+V1 is **not complete** unless both are fixed and validated:
+1. CLI real-switch command path works as documented.
+2. Shipped/default startup state is safe-by-default (`localSwitchingEnabled=false`).
+
+Phase 7 addresses both in code/tests, but real profile switching must still be validated locally on your own machine.
+
+## Validation
+
+Run:
 
 ```bash
-npx tsx cli.ts launch
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run screenshot
 ```
 
-## Usage snapshots
-
-Use manual snapshot updates from CLI or UI.
-
-```bash
-npx tsx cli.ts usage update <profileId> --five-hour Available --weekly Unknown --credits Unknown --source Manual --notes "manual snapshot"
-```
-
-## Recommendations
-
-Recommendation language is intentionally safe and limited:
-
-- Stay on this profile
-- Usage status low, consider choosing another available profile before starting a large task
-- Current profile appears unavailable based on your manual snapshot
-- Verify this profile before using it
-- No recommendation because usage status is unknown
-
-## Doctor
-
-```bash
-npx tsx cli.ts doctor
-```
-
-Doctor reports storage, lock, active pointer, snapshot path, and launch configuration issues.
-
-## Safety model
-
-See `docs/SAFETY_MODEL.md`.
-
-## Local Windows validation
-
-See `docs/LOCAL_WINDOWS_VALIDATION_CHECKLIST.md`.
-
-## Troubleshooting
-
-See `docs/TROUBLESHOOTING.md`.
-
-## Data storage location
-
-Default local paths:
-
-- `./state/durable-state.json`
-- `./state/durable-state.backup.json`
-- `./state/profile-snapshots/`
-- `./state/rollbacks/`
-- `./logs/carousel.jsonl`
-
-## Sensitive data handling
-
-- Raw auth/session file contents are never sent to frontend.
-- Ledger stores metadata-only switch events.
-- Logger redacts token/password/secret-like fields.
-
-## Release checklist
-
-See `docs/RELEASE_CHECKLIST.md`.
+If `npm run screenshot` fails, it should fail with an explicit dependency reason (Playwright/browser deps).

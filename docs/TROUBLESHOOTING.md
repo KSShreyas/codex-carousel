@@ -4,20 +4,28 @@
 - Ensure `npm run dev` is running.
 - Check `http://127.0.0.1:3000/api/health`.
 
-## Switch fails with confirmation error
-- Re-run with explicit confirmation (`--confirm` in CLI).
+## Switch button is disabled in UI
+The real switch button stays disabled until all are true:
+- dry-run succeeded
+- explicit confirmation checked
+- `localSwitchingEnabled=true`
 
-## Switch fails with disabled error
-- Enable `localSwitchingEnabled` in settings.
+## Local switching enabled warning shown
+If local switching is enabled and `codexProfileRootPath` is empty, save a valid root path in settings.
 
-## Switch fails with process-running warning
-- Close Codex and retry.
+## CLI real-switch command errors
+Use either:
+- `npx tsx cli.ts switch run <profileId-or-alias> --confirm`
+- `npx tsx cli.ts switch <profileId-or-alias> --confirm`
 
-## Dry-run shows path warnings
-- Configure `codexProfileRootPath` and ensure profile snapshots exist.
+Windows fallback:
+- `npx.cmd tsx cli.ts ...`
+- `node .\node_modules\tsx\dist\cli.mjs cli.ts ...`
 
-## Doctor degraded
-- Run `carousel doctor` and resolve listed issues one by one.
+## Dry-run shows warnings
+- Ensure profile snapshots exist.
+- Ensure `codexProfileRootPath` is valid.
+- Review doctor output and ledger events.
 
-## Rollback occurred
-- Inspect ledger for `ROLLBACK_*` events and revalidate profile root contents.
+## Screenshot command fails
+`npm run screenshot` requires Playwright and browser dependencies. The script reports exact missing dependency reasons and exits with error.

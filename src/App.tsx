@@ -48,6 +48,7 @@ type Settings = {
   codexProfileRootPath: string | null;
   codexLaunchCommand: string | null;
   requireCodexClosedBeforeSwitch: boolean;
+  autoLaunchAfterSwitch: boolean;
 };
 
 type UsageSnapshot = {
@@ -61,7 +62,22 @@ type UsageSnapshot = {
   notes: string | null;
 };
 
-const STATE_LABELS = ['Unknown', 'Observed', 'Verified', 'Unverified', 'Failed', 'Dry-run only', 'Local switching disabled', 'Switch requires confirmation'];
+type DryRunResult = {
+  dryRun: boolean;
+  targetProfileId: string;
+  backupPlan?: unknown[];
+  restorePlan?: unknown[];
+  warnings?: string[];
+};
+
+const statusTone = (value: string) => {
+  if (value.toLowerCase().includes('exhausted') || value.toLowerCase().includes('failed')) return 'text-red-300 border-red-500/50';
+  if (value.toLowerCase().includes('low') || value.toLowerCase().includes('degraded') || value.toLowerCase().includes('warning')) return 'text-yellow-300 border-yellow-500/50';
+  if (value.toLowerCase().includes('available') || value.toLowerCase().includes('healthy') || value.toLowerCase().includes('verified') || value.toLowerCase() === 'ok') return 'text-green-300 border-green-500/50';
+  return 'text-zinc-300 border-zinc-600/50';
+};
+
+const cardClass = 'rounded-md border border-zinc-800 bg-zinc-950/95 p-4 shadow-[0_0_0_1px_rgba(63,63,70,.2)]';
 
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -73,13 +89,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [switchTarget, setSwitchTarget] = useState<Profile | null>(null);
-  const [switchDryRun, setSwitchDryRun] = useState<any | null>(null);
+  const [switchDryRun, setSwitchDryRun] = useState<DryRunResult | null>(null);
   const [switchLoading, setSwitchLoading] = useState(false);
   const [switchConfirm, setSwitchConfirm] = useState(false);
-  const [usageModalOpen, setUsageModalOpen] = useState(false);
-  const [usageModalData, setUsageModalData] = useState<UsageSnapshot[]>([]);
-
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [captureForm, setCaptureForm] = useState({ alias: '', plan: 'Plus' });
+  const [usageModalData, setUsageModalData] = useState<UsageSnapshot[]>([]);
 
   const [usageForm, setUsageForm] = useState({
     profileId: '',
@@ -94,19 +109,21 @@ export default function App() {
 
   const load = async () => {
     try {
-      const [res, healthRes, doctorRes, settingsRes] = await Promise.all([
+      const [statusRes, healthRes, doctorRes, settingsRes, ledgerRes] = await Promise.all([
         fetch('/api/status'),
         fetch('/api/health'),
         fetch('/api/doctor'),
         fetch('/api/settings'),
+        fetch('/api/ledger'),
       ]);
-      const data = await res.json();
+      const statusData = await statusRes.json();
       const healthData = await healthRes.json();
       const doctorData = await doctorRes.json();
       const settingsData = await settingsRes.json();
-      setProfiles(data.profiles ?? []);
-      setActiveProfileId(data.runtime?.activeProfileId ?? null);
-      setLedger(data.ledger ?? []);
+      const ledgerData = await ledgerRes.json();
+      setProfiles(statusData.profiles ?? []);
+      setActiveProfileId(statusData.runtime?.activeProfileId ?? null);
+      setLedger(ledgerData ?? statusData.ledger ?? []);
       setHealth(healthData);
       setDoctor(doctorData);
       setSettings(settingsData);
@@ -120,25 +137,40 @@ export default function App() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 3000);
+    const id = setInterval(load, 3500);
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (!usageForm.profileId && profiles.length > 0) {
+      setUsageForm((current) => ({ ...current, profileId: activeProfileId ?? profiles[0].id }));
+    }
+  }, [profiles, activeProfileId, usageForm.profileId]);
+
   const active = useMemo(() => profiles.find((p) => p.id === activeProfileId) ?? null, [profiles, activeProfileId]);
+  const lastSnapshot = usageModalData[0] ?? null;
+  const dryRunPassed = Boolean(switchDryRun?.dryRun);
+  const canRunRealSwitch = Boolean(switchTarget && dryRunPassed && switchConfirm && settings?.localSwitchingEnabled);
 
   const saveSettings = async (patch: Partial<Settings>) => {
-    await fetch('/api/settings', {
+    const res = await fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data?.error ?? 'Failed to save settings');
+      return;
+    }
+    setSettings(data);
     await load();
   };
 
   const submitUsage = async (e: FormEvent) => {
     e.preventDefault();
     if (!usageForm.profileId) return;
-    await fetch(`/api/profiles/${usageForm.profileId}/usage-snapshots`, {
+    const res = await fetch(`/api/profiles/${usageForm.profileId}/usage-snapshots`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -151,29 +183,50 @@ export default function App() {
         source: usageForm.source,
       }),
     });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data?.error ?? 'Save usage snapshot failed');
+      return;
+    }
+
     await fetch('/api/recommendations/recompute', { method: 'POST' });
+    const snapshotsRes = await fetch(`/api/profiles/${usageForm.profileId}/usage-snapshots`);
+    setUsageModalData(await snapshotsRes.json());
     await load();
   };
 
-  const openUsageModal = async () => {
-    if (!activeProfileId) return;
-    const res = await fetch(`/api/profiles/${activeProfileId}/usage-snapshots`);
+  const openUsageSnapshots = async (profileId: string) => {
+    setUsageForm((v) => ({ ...v, profileId }));
+    const res = await fetch(`/api/profiles/${profileId}/usage-snapshots`);
     const data = await res.json();
     setUsageModalData(data ?? []);
-    setUsageModalOpen(true);
   };
 
   const captureCurrent = async () => {
-    await fetch('/api/profiles/capture-current', {
+    const res = await fetch('/api/profiles/capture-current', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(captureForm),
     });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data?.error ?? 'Capture failed');
+      return;
+    }
+    setCaptureForm({ alias: '', plan: 'Plus' });
     await load();
+  };
+
+  const selectSwitchTarget = (profile: Profile) => {
+    setSwitchTarget(profile);
+    setSwitchDryRun(null);
+    setSwitchConfirm(false);
+    setSwitchError(null);
   };
 
   const runSwitchDryRun = async (targetProfileId: string) => {
     setSwitchLoading(true);
+    setSwitchError(null);
     try {
       const res = await fetch(`/api/profiles/${targetProfileId}/switch/dry-run`, {
         method: 'POST',
@@ -182,7 +235,7 @@ export default function App() {
       });
       const data = await res.json();
       setSwitchDryRun(data);
-      if (!res.ok) setError(data?.error ?? 'Dry-run failed');
+      if (!res.ok) setSwitchError(data?.error ?? 'Dry-run failed');
     } finally {
       setSwitchLoading(false);
     }
@@ -196,8 +249,12 @@ export default function App() {
       body: JSON.stringify({ confirm: switchConfirm }),
     });
     const data = await res.json();
-    if (!res.ok) setError(data?.error ?? 'Switch failed');
-    else setError(null);
+    if (!res.ok) {
+      setSwitchError(data?.error ?? 'Switch failed');
+      await load();
+      return;
+    }
+    setSwitchError(null);
     await load();
   };
 
@@ -205,159 +262,229 @@ export default function App() {
     const res = await fetch('/api/codex/launch', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) setError(data?.error ?? 'Launch failed');
+    else setError(null);
   };
 
-  if (loading) return <div className="p-6">Loading...</div>;
+  if (loading) return <div className="min-h-screen bg-black p-6 text-zinc-100">Booting operator console...</div>;
 
   return (
-    <div className="p-6 text-white bg-black min-h-screen">
-      <h1 className="text-2xl mb-4">Codex Carousel V1.0</h1>
-      {error && <div className="text-red-400 mb-4">{error}</div>}
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Backend Status</h2>
-        <div className="text-sm grid grid-cols-2 gap-2">
-          <div><strong>API Reachable:</strong> {health?.ok ? 'Verified' : 'Failed'}</div>
-          <div><strong>Storage Status:</strong> {health?.storageStatus ?? 'Unknown'}</div>
-          <div><strong>Ledger Writable:</strong> {health?.ledgerWritable ? 'Verified' : 'Failed'}</div>
-          <div><strong>Demo Mode:</strong> {health?.demoMode ? 'Observed' : 'Off by default'}</div>
-        </div>
-      </section>
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Active Profile Card</h2>
-        {active ? (
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><strong>Alias:</strong> {active.alias}</div>
-            <div><strong>Plan/Capacity Card:</strong> {active.plan}</div>
-            <div><strong>5H Window Status:</strong> {active.fiveHourStatus}</div>
-            <div><strong>Weekly/Plan Status:</strong> {active.weeklyStatus}</div>
-            <div><strong>Credits Status:</strong> {active.creditsStatus}</div>
-            <div><strong>Verification:</strong> {active.verificationStatus}</div>
-            <div><strong>Recommendation:</strong> {active.recommendationReason ?? 'No recommendation because usage status is unknown'}</div>
-            <div><strong>Last Activated:</strong> {active.lastActivatedAt ?? 'Unknown'}</div>
-          </div>
-        ) : <div className="text-sm">Unknown</div>}
-      </section>
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">State Labels</h2>
-        <div className="text-xs text-gray-300">{STATE_LABELS.join(' • ')}</div>
-      </section>
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Profile Table</h2>
-        <div className="space-y-2">
-          {profiles.map((p) => (
-            <div key={p.id} className="border border-gray-800 p-2 flex items-center justify-between text-sm">
-              <div>
-                <div>{p.alias} ({p.plan})</div>
-                <div className="text-xs text-gray-400">Verification {p.verificationStatus} • Snapshot {p.snapshotStatus ?? 'Unknown'}</div>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-3 py-1 border border-blue-600" onClick={() => runSwitchDryRun(p.id)}>Dry-run switch</button>
-                <button className="px-3 py-1 border border-green-600" onClick={() => { setSwitchTarget(p); setSwitchDryRun(null); setSwitchConfirm(false); }}>Switch profile</button>
-              </div>
+    <div className="min-h-screen bg-black text-zinc-100">
+      <div className="mx-auto max-w-7xl p-4 md:p-6">
+        <header className={`${cardClass} mb-4 border-green-500/25`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-xl font-semibold tracking-wide text-green-300">Codex Carousel V1.0</h1>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className={`rounded border px-2 py-1 ${statusTone(health?.ok ? 'healthy' : 'failed')}`}>Backend: {health?.ok ? 'Online' : 'Offline'}</span>
+              <span className={`rounded border px-2 py-1 ${statusTone(health?.storageStatus ?? 'Unknown')}`}>Storage: {health?.storageStatus ?? 'Unknown'}</span>
+              <span className={`rounded border px-2 py-1 ${statusTone(settings?.localSwitchingEnabled ? 'verified' : 'warning')}`}>Local switching: {settings?.localSwitchingEnabled ? 'Enabled' : 'Disabled'}</span>
             </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Capture Current Login</h2>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <label>Alias
-            <input className="block bg-black border border-gray-600 w-full" value={captureForm.alias} onChange={(e) => setCaptureForm((v) => ({ ...v, alias: e.target.value }))} />
-          </label>
-          <label>Plan
-            <select className="block bg-black border border-gray-600 w-full" value={captureForm.plan} onChange={(e) => setCaptureForm((v) => ({ ...v, plan: e.target.value }))}>
-              <option>Plus</option><option>Pro100</option><option>Pro200</option><option>Unknown</option>
-            </select>
-          </label>
-          <button className="px-3 py-1 border border-green-600 col-span-2" onClick={captureCurrent}>Capture current login</button>
-        </div>
-      </section>
-
-      {switchTarget && (
-        <section className="mb-4 border border-yellow-600 p-4">
-          <h2 className="font-bold mb-2">Switch Profile</h2>
-          <div className="text-sm">Switch requires confirmation. {settings?.localSwitchingEnabled ? 'Observed' : 'Local switching disabled'}</div>
-          <button className="mt-2 px-3 py-1 border border-blue-500" onClick={() => runSwitchDryRun(switchTarget.id)} disabled={switchLoading}>{switchLoading ? 'Running dry-run...' : 'Dry-run switch'}</button>
-          {switchDryRun && (
-            <div className="mt-2 text-sm">
-              <div><strong>Dry-run result:</strong> {switchDryRun.dryRun ? 'Dry-run only' : 'Failed'}</div>
-              <div><strong>Verification status:</strong> {switchDryRun.verification?.targetProfile ?? 'Unknown'}</div>
-              <div><strong>Warnings:</strong> {(switchDryRun.warnings ?? []).join(' | ') || 'Unknown'}</div>
-            </div>
-          )}
-          <label className="block mt-3"><input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} /> Confirm real switch</label>
-          <button className="mt-2 px-3 py-1 border border-red-500" onClick={runRealSwitch} disabled={!switchConfirm}>Switch profile</button>
-        </section>
-      )}
-
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Usage Snapshot Modal</h2>
-        <button className="px-3 py-1 border border-blue-500" onClick={openUsageModal} disabled={!activeProfileId}>Open usage snapshot modal</button>
-      </section>
-
-      {usageModalOpen && (
-        <section className="mb-4 border border-blue-700 p-4 text-sm">
-          <h3 className="font-bold">Usage Snapshot Modal</h3>
-          <button className="mb-2 px-2 py-1 border border-gray-600" onClick={() => setUsageModalOpen(false)}>Close</button>
-          <div className="max-h-40 overflow-auto">
-            {usageModalData.map((s) => <div key={s.id} className="border-b border-gray-800 py-1">{s.createdAt} • {s.fiveHourStatus}/{s.weeklyStatus}/{s.creditsStatus} • {s.source}</div>)}
-            {usageModalData.length === 0 && <div>Unknown</div>}
           </div>
-        </section>
-      )}
+          {error && <div className="mt-3 rounded border border-red-500/50 bg-red-950/30 px-3 py-2 text-sm text-red-200">{error}</div>}
+        </header>
 
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Manual Usage Snapshot</h2>
-        <form onSubmit={submitUsage} className="grid grid-cols-2 gap-2 text-sm">
-          <label>Profile
-            <select className="block bg-black border border-gray-600 w-full" value={usageForm.profileId} onChange={(e) => setUsageForm((s) => ({ ...s, profileId: e.target.value }))}>
-              <option value="">Select</option>
-              {profiles.map((p) => <option key={p.id} value={p.id}>{p.alias}</option>)}
-            </select>
-          </label>
-          <label>Source
-            <select className="block bg-black border border-gray-600 w-full" value={usageForm.source} onChange={(e) => setUsageForm((s) => ({ ...s, source: e.target.value as Source }))}>
-              <option>Manual</option><option>CodexBanner</option><option>UsageDashboard</option><option>Unknown</option>
-            </select>
-          </label>
-          <button className="px-3 py-1 border border-blue-500 col-span-2">Save Usage Snapshot</button>
-        </form>
-      </section>
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.7fr]">
+          <aside className="space-y-4">
+            <section className={cardClass}>
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">Active Profile Card</h2>
+              {active ? (
+                <div className="space-y-2 text-sm">
+                  <div className="font-medium text-green-300">{active.alias} · {active.plan}</div>
+                  <div className="text-xs text-zinc-400">ID: {active.id}</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <span className={`rounded border px-2 py-1 ${statusTone(active.fiveHourStatus)}`}>5H: {active.fiveHourStatus}</span>
+                    <span className={`rounded border px-2 py-1 ${statusTone(active.weeklyStatus)}`}>Weekly: {active.weeklyStatus}</span>
+                    <span className={`rounded border px-2 py-1 ${statusTone(active.creditsStatus)}`}>Credits: {active.creditsStatus}</span>
+                    <span className={`rounded border px-2 py-1 ${statusTone(active.verificationStatus)}`}>Verify: {active.verificationStatus}</span>
+                  </div>
+                  <div className="text-xs text-zinc-300">Last activated: {active.lastActivatedAt ?? 'Unknown'}</div>
+                </div>
+              ) : <div className="text-sm text-zinc-400">Unknown (no active profile selected).</div>}
+            </section>
 
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Settings Panel</h2>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <label className="col-span-2"><input type="checkbox" checked={settings?.localSwitchingEnabled ?? false} onChange={(e) => saveSettings({ localSwitchingEnabled: e.target.checked })} /> Local switching enabled</label>
-          <label>Codex profile root path
-            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexProfileRootPath ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexProfileRootPath: e.target.value } : s)} />
-          </label>
-          <label>Codex launch command
-            <input className="block bg-black border border-gray-600 w-full" value={settings?.codexLaunchCommand ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexLaunchCommand: e.target.value } : s)} />
-          </label>
-          <button className="px-3 py-1 border border-blue-500 col-span-2" onClick={() => saveSettings({ codexProfileRootPath: settings?.codexProfileRootPath ?? null, codexLaunchCommand: settings?.codexLaunchCommand ?? null })}>Save settings</button>
+            <section className={cardClass}>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Recommendation</h2>
+              <div className="text-sm text-green-200">{active?.recommendation ?? 'Unknown'}</div>
+              <div className="mt-1 text-xs text-zinc-400">{active?.recommendationReason ?? 'No recommendation because usage status is unknown'}</div>
+            </section>
+
+            <section className={cardClass}>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Usage Snapshot</h2>
+              <div className="space-y-2 text-xs">
+                <label className="block text-zinc-300">Profile
+                  <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm.profileId} onChange={(e) => openUsageSnapshots(e.target.value)}>
+                    <option value="">Select profile</option>
+                    {profiles.map((p) => <option key={p.id} value={p.id}>{p.alias}</option>)}
+                  </select>
+                </label>
+                <div className="rounded border border-zinc-800 bg-zinc-900/70 p-2">
+                  <div className="text-zinc-400">Latest observed:</div>
+                  {lastSnapshot ? (
+                    <div className="mt-1 space-y-1 text-zinc-200">
+                      <div>{lastSnapshot.fiveHourStatus}/{lastSnapshot.weeklyStatus}/{lastSnapshot.creditsStatus}</div>
+                      <div>Source: {lastSnapshot.source}</div>
+                      <div>Reset: {lastSnapshot.observedResetAt ?? 'Unknown'}</div>
+                    </div>
+                  ) : <div className="mt-1 text-zinc-400">Unknown</div>}
+                </div>
+                <form onSubmit={submitUsage} className="grid grid-cols-2 gap-2">
+                  {(['fiveHourStatus', 'weeklyStatus', 'creditsStatus'] as const).map((field) => (
+                    <label key={field} className="block text-zinc-300">
+                      {field === 'fiveHourStatus' ? 'fiveHourStatus' : field === 'weeklyStatus' ? 'weeklyStatus' : 'creditsStatus'}
+                      <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm[field]} onChange={(e) => setUsageForm((s) => ({ ...s, [field]: e.target.value as LimitStatus }))}>
+                        <option>Available</option><option>Low</option><option>Exhausted</option><option>Unknown</option>
+                      </select>
+                    </label>
+                  ))}
+                  <label className="col-span-2 block text-zinc-300">observedResetAt
+                    <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm.observedResetAt} onChange={(e) => setUsageForm((s) => ({ ...s, observedResetAt: e.target.value }))} placeholder="2026-04-27T00:00:00.000Z" />
+                  </label>
+                  <label className="col-span-2 block text-zinc-300">lastLimitBanner
+                    <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm.lastLimitBanner} onChange={(e) => setUsageForm((s) => ({ ...s, lastLimitBanner: e.target.value }))} />
+                  </label>
+                  <label className="col-span-2 block text-zinc-300">notes
+                    <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm.notes} onChange={(e) => setUsageForm((s) => ({ ...s, notes: e.target.value }))} />
+                  </label>
+                  <label className="col-span-2 block text-zinc-300">source
+                    <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={usageForm.source} onChange={(e) => setUsageForm((s) => ({ ...s, source: e.target.value as Source }))}>
+                      <option>Manual</option><option>CodexBanner</option><option>UsageDashboard</option><option>Unknown</option>
+                    </select>
+                  </label>
+                  <button className="col-span-2 rounded border border-cyan-500/70 bg-cyan-950/20 px-3 py-2 text-sm font-medium text-cyan-200">Save Usage Snapshot</button>
+                </form>
+              </div>
+            </section>
+
+            <section className={cardClass}>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Settings</h2>
+              <div className="space-y-2 text-xs">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={settings?.localSwitchingEnabled ?? false} onChange={(e) => setSettings((s) => s ? { ...s, localSwitchingEnabled: e.target.checked } : s)} />
+                  localSwitchingEnabled
+                </label>
+                <label className="block">codexProfileRootPath
+                  <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={settings?.codexProfileRootPath ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexProfileRootPath: e.target.value } : s)} />
+                </label>
+                <label className="block">codexLaunchCommand
+                  <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={settings?.codexLaunchCommand ?? ''} onChange={(e) => setSettings((s) => s ? { ...s, codexLaunchCommand: e.target.value } : s)} />
+                </label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={settings?.requireCodexClosedBeforeSwitch ?? true} onChange={(e) => setSettings((s) => s ? { ...s, requireCodexClosedBeforeSwitch: e.target.checked } : s)} /> requireCodexClosedBeforeSwitch</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={settings?.autoLaunchAfterSwitch ?? false} onChange={(e) => setSettings((s) => s ? { ...s, autoLaunchAfterSwitch: e.target.checked } : s)} /> autoLaunchAfterSwitch</label>
+                {settings?.localSwitchingEnabled && !settings.codexProfileRootPath && (
+                  <div className="rounded border border-yellow-500/60 bg-yellow-950/20 p-2 text-yellow-200">Warning: local switching is enabled but codexProfileRootPath is missing.</div>
+                )}
+                <button className="w-full rounded border border-green-500/70 bg-green-950/20 px-3 py-2 text-sm text-green-200" onClick={() => saveSettings({
+                  localSwitchingEnabled: settings?.localSwitchingEnabled ?? false,
+                  codexProfileRootPath: settings?.codexProfileRootPath ?? null,
+                  codexLaunchCommand: settings?.codexLaunchCommand ?? null,
+                  requireCodexClosedBeforeSwitch: settings?.requireCodexClosedBeforeSwitch ?? true,
+                  autoLaunchAfterSwitch: settings?.autoLaunchAfterSwitch ?? false,
+                })}>Save Settings</button>
+              </div>
+            </section>
+          </aside>
+
+          <main className="space-y-4">
+            <section className={cardClass}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Profile Table</h2>
+                <div className="text-xs text-zinc-500">Profiles: {health?.profileCount ?? profiles.length}</div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="text-zinc-400">
+                    <tr className="border-b border-zinc-800">
+                      <th className="px-2 py-2">Alias</th><th className="px-2 py-2">Plan</th><th className="px-2 py-2">Usage</th><th className="px-2 py-2">Verification</th><th className="px-2 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profiles.map((p) => (
+                      <tr key={p.id} className={`border-b border-zinc-900 ${switchTarget?.id === p.id ? 'bg-green-950/20' : ''}`}>
+                        <td className="px-2 py-2">{p.alias}{activeProfileId === p.id && <span className="ml-2 rounded border border-green-500/70 px-1 text-[10px] text-green-300">ACTIVE</span>}</td>
+                        <td className="px-2 py-2">{p.plan}</td>
+                        <td className="px-2 py-2">{p.fiveHourStatus}/{p.weeklyStatus}/{p.creditsStatus}</td>
+                        <td className="px-2 py-2">{p.verificationStatus}</td>
+                        <td className="px-2 py-2">
+                          <div className="flex flex-wrap gap-2">
+                            <button className="rounded border border-blue-500/70 px-2 py-1 text-blue-200" onClick={() => { selectSwitchTarget(p); runSwitchDryRun(p.id); }}>Dry Run</button>
+                            <button className="rounded border border-green-500/70 px-2 py-1 text-green-200" onClick={() => selectSwitchTarget(p)}>Switch Profile</button>
+                            <button className="rounded border border-zinc-600 px-2 py-1 text-zinc-200" onClick={() => openUsageSnapshots(p.id)}>Usage</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className={cardClass}>
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">Switch / Capture Controls</h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 text-xs">
+                  <div className="font-medium text-zinc-300">Capture Current Login</div>
+                  <label className="block">Alias
+                    <input className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={captureForm.alias} onChange={(e) => setCaptureForm((v) => ({ ...v, alias: e.target.value }))} />
+                  </label>
+                  <label className="block">Plan
+                    <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1" value={captureForm.plan} onChange={(e) => setCaptureForm((v) => ({ ...v, plan: e.target.value }))}>
+                      <option>Plus</option><option>Pro100</option><option>Pro200</option><option>Unknown</option>
+                    </select>
+                  </label>
+                  <button className="rounded border border-green-500/70 bg-green-950/20 px-3 py-2 text-green-200" onClick={captureCurrent}>Capture Current Login</button>
+                </div>
+
+                <div className="space-y-2 rounded border border-zinc-800 bg-zinc-900/60 p-3 text-xs">
+                  <div className="font-medium text-zinc-200">Switch Panel {switchTarget ? `· ${switchTarget.alias}` : ''}</div>
+                  <div className="text-zinc-400">Select a profile, run dry-run, review warnings, then confirm real switch.</div>
+                  <button className="rounded border border-cyan-500/70 px-3 py-2 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => switchTarget && runSwitchDryRun(switchTarget.id)} disabled={!switchTarget || switchLoading}>{switchLoading ? 'Running...' : 'Dry Run'}</button>
+                  {switchDryRun && (
+                    <div className="rounded border border-zinc-700 p-2">
+                      <div>Dry-run: {switchDryRun.dryRun ? 'Succeeded' : 'Failed'}</div>
+                      <div>Backup entries: {switchDryRun.backupPlan?.length ?? 0}</div>
+                      <div>Restore entries: {switchDryRun.restorePlan?.length ?? 0}</div>
+                      <div>Warnings: {(switchDryRun.warnings?.join(' | ') || 'None')}</div>
+                    </div>
+                  )}
+                  {switchError && <div className="rounded border border-red-500/50 bg-red-950/20 p-2 text-red-200">{switchError}</div>}
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} /> Confirm real switch</label>
+                  <button className="rounded border border-red-500/70 bg-red-950/20 px-3 py-2 text-red-200 disabled:cursor-not-allowed disabled:opacity-40" disabled={!canRunRealSwitch} onClick={runRealSwitch}>Switch Profile</button>
+                  {!settings?.localSwitchingEnabled && <div className="text-yellow-300">Local switching disabled in settings.</div>}
+                </div>
+              </div>
+              <button className="mt-4 rounded border border-purple-500/70 bg-purple-950/20 px-3 py-2 text-purple-200" onClick={launchCodex}>Launch Codex</button>
+            </section>
+
+            <section className={cardClass}>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Event Ledger</h2>
+              <div className="max-h-80 overflow-auto text-xs custom-scrollbar">
+                {ledger.map((evt) => (
+                  <div key={evt.id} className="mb-1 rounded border border-zinc-900 bg-zinc-900/80 p-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-zinc-200">{evt.eventType}</span>
+                      <span className={`rounded border px-1 py-0.5 text-[10px] ${statusTone(evt.severity)}`}>{evt.severity}</span>
+                    </div>
+                    <div className="text-zinc-400">{evt.timestamp}</div>
+                    <div className="text-zinc-200">{evt.message}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </main>
         </div>
-        <button className="mt-3 px-3 py-1 border border-green-500" onClick={launchCodex}>Launch Codex</button>
-      </section>
 
-      <section className="mb-4 border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Doctor Panel</h2>
-        <div className="text-sm">Status: {doctor?.status ?? 'Unknown'}</div>
-        {doctor && doctor.issues.length > 0 && <ul className="list-disc list-inside text-yellow-300">{doctor.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
-      </section>
-
-      <section className="border border-gray-700 p-4">
-        <h2 className="font-bold mb-2">Event Ledger</h2>
-        <div className="max-h-64 overflow-auto text-xs space-y-1">
-          {ledger.map((evt) => (
-            <div key={evt.id} className="border-b border-gray-800 pb-1"><strong>{evt.eventType}</strong> [{evt.severity}] — {evt.message}</div>
-          ))}
-        </div>
-      </section>
+        <footer className={`${cardClass} mt-4`}>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Doctor / Safety Status</h2>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className={`rounded border px-2 py-1 ${statusTone(doctor?.status ?? 'Unknown')}`}>Doctor: {doctor?.status ?? 'Unknown'}</span>
+            <span className={`rounded border px-2 py-1 ${statusTone(settings?.localSwitchingEnabled ? 'warning' : 'healthy')}`}>Safety gate: {settings?.localSwitchingEnabled ? 'Real switch enabled' : 'Real switch disabled by default'}</span>
+          </div>
+          {doctor?.issues?.length ? (
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-yellow-200">
+              {doctor.issues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          ) : <div className="mt-2 text-sm text-zinc-400">No doctor warnings detected.</div>}
+        </footer>
+      </div>
     </div>
   );
 }

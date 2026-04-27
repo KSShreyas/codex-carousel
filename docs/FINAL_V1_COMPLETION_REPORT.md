@@ -1,55 +1,33 @@
-# Final V1 Completion Report
+# Final V1 Completion Report (Updated)
 
 Date: 2026-04-27
 
-## What is done
-- Finalized manual-only V1 dashboard language and structure.
-- Hardened recommendation language to safe approved phrases.
-- Added logger redaction for token/password/secret fields.
-- Added/updated docs for user guide, safety model, troubleshooting, architecture, and release checklist.
-- Added script parity for `typecheck` and validated baseline commands.
-- Expanded tests for safety constraints and UI/backend parity indicators.
+## Phase 7 status
+- Restored production-quality operator-console UI.
+- Fixed CLI real-switch command path and compatibility mode.
+- Fixed safe-by-default startup state behavior.
+- Added regression tests for UI structure, switch safety gating, CLI command behavior, and seeded state safety.
 
-## What is intentionally not done
-- No automatic switching.
-- No API-key workflow.
-- No multi-provider support.
-- No fake identity verification.
+## Honest completion criteria
+V1 cannot be called complete unless all are true:
+- UI is visually acceptable and no raw checklist dump remains.
+- CLI real-switch works with documented command.
+- `localSwitchingEnabled` defaults to false in shipped/default state behavior.
+- Backend/API safety confirmation still enforced.
+- Fixture switch path still works.
+- No sensitive content leaks.
+- Restart persistence still works.
 
-## Exact V1 behavior
-- Backend is source of truth.
-- CLI/UI both read/write backend APIs.
-- Dry-run can be executed before real switch.
-- Real switch needs explicit confirmation.
-- Local switching disabled by default.
-- Rollback flow exists and is ledger-tracked.
+## Current standing
+- Code and automated tests now cover the major blockers.
+- Real profile switching still needs local host validation before claiming full production confidence.
+- Identity verification may still be unavailable (`VerifyUnavailable`) depending on environment.
 
-## Exact commands to run
+## Commands
 - `npm run typecheck`
 - `npm run lint`
 - `npm test`
 - `npm run build`
-- `npm run dev`
-- `npx tsx cli.ts status`
-- `npx tsx cli.ts doctor`
-- `npx tsx cli.ts switch dry-run <profileId>`
-- `npx tsx cli.ts switch <profileId> --confirm`
+- `npm run screenshot` (optional dependency path)
 
-## Test results
-- Unit and integration tests pass in local CI-like run.
-
-## Build results
-- Vite production build succeeds.
-
-## Local validation needed
-- Validate real Codex profile root and process behavior on Windows host.
-- Validate launch command and post-switch manual identity checks.
-
-## Known limitations
-- Identity verification can remain `VerifyUnavailable` where safe automated check is unavailable.
-- Process detection is best-effort.
-
-## Future V1.1 ideas
-- Optional pagination/filtering for ledger.
-- Stronger structured doctor remediation hints.
-- Optional signed export of non-sensitive switch audit summaries.
+See `docs/PHASE_7_UI_AND_BLOCKER_FIX_REPORT.md` for detailed changes.

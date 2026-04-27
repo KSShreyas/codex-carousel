@@ -51,6 +51,22 @@ export class DurableStore {
     return this.backupPath;
   }
 
+
+  private enforceSafeDefaultSettings(state: DurableState): boolean {
+    const seededLikeState = state.profiles.length === 0
+      && state.usageSnapshots.length === 0
+      && state.switchEvents.length === 0
+      && state.settings.activeProfileId === null
+      && !state.settings.codexProfileRootPath;
+
+    if (seededLikeState && state.settings.localSwitchingEnabled) {
+      state.settings.localSwitchingEnabled = false;
+      return true;
+    }
+
+    return false;
+  }
+
   private defaultState(): DurableState {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -77,10 +93,17 @@ export class DurableStore {
     await fs.mkdir(this.baseDir, { recursive: true });
     const loaded = await this.readStateWithRecovery();
     this.state = loaded ?? this.defaultState();
+    let changed = false;
     if (this.state.schemaVersion !== SCHEMA_VERSION) {
       this.migrate(this.state);
-      await this.save();
+      changed = true;
     }
+
+    if (this.enforceSafeDefaultSettings(this.state)) {
+      changed = true;
+    }
+
+    if (changed) await this.save();
   }
 
   private migrate(state: DurableState) {
