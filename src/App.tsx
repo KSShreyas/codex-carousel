@@ -68,14 +68,15 @@ type UsageSnapshot = {
 };
 
 type SafetyResult = {
-  completed: boolean;
-  pass: boolean;
-  backupState: 'Ready' | 'Unknown' | 'Failed';
-  targetSnapshot: 'Ready' | 'Missing' | 'Failed';
-  codexClosedState: 'Required' | 'Ready' | 'Unknown';
-  setupState: 'Complete' | 'Required';
-  overall: 'Safe to switch' | 'Fix setup first';
-  warningText: string;
+  ok: boolean;
+  targetProfileId: string;
+  checks: Array<{
+    label: 'Current account backup' | 'Target account saved login' | 'Codex status' | 'Setup' | 'Result';
+    status: 'Ready' | 'Warning' | 'Failed' | 'Unknown';
+    detail: string;
+  }>;
+  canSwitch: boolean;
+  warnings: string[];
 };
 
 type DiscoveryCandidate = {
@@ -96,8 +97,11 @@ type DiscoveryResult = {
   warnings: string[];
 };
 
-const cardClass = 'rounded-xl border border-zinc-800 bg-zinc-950/80 p-4 shadow-[0_8px_24px_rgba(0,0,0,.35)]';
+const cardClass = 'rounded-2xl border border-zinc-800/90 bg-zinc-950/85 p-5 shadow-[0_14px_34px_rgba(0,0,0,.45)] backdrop-blur';
 const inputClass = 'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500 focus:outline-none';
+const buttonPrimaryClass = 'rounded-lg border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-[0_0_0_1px_rgba(0,0,0,.25)] transition hover:brightness-110';
+const buttonSecondaryClass = 'rounded-lg border border-zinc-600/90 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-200 transition hover:border-cyan-500 hover:text-cyan-200';
+const chipClass = 'inline-flex items-center rounded-full border border-zinc-700/80 bg-zinc-900/70 px-2.5 py-1 text-xs text-zinc-300';
 
 function StatusBadge({ label, tone }: { label: string; tone: 'ok' | 'warn' | 'bad' | 'neutral' }) {
   const toneClass = tone === 'ok'
@@ -130,6 +134,9 @@ function toFriendlyActivity(evt: LedgerEvent): string {
     PROFILE_UPDATED: 'Updated account details.',
     USAGE_SNAPSHOT_UPDATED: 'Updated usage status.',
     SWITCH_STARTED: 'Started account switch.',
+    SWITCH_DRY_RUN_STARTED: 'Started Safety Check.',
+    SWITCH_DRY_RUN_COMPLETED: 'Safety Check completed.',
+    SWITCH_DRY_RUN_FAILED: 'Safety Check found an issue.',
     SWITCH_COMPLETED: 'Switched account successfully.',
     SWITCH_FAILED: 'Account switch failed.',
     PROFILE_CAPTURE_COMPLETED: 'Saved current Codex login as an account.',
@@ -137,27 +144,6 @@ function toFriendlyActivity(evt: LedgerEvent): string {
     CODEX_LAUNCHED: 'Opened Codex.',
   };
   return map[evt.eventType] ?? evt.message;
-}
-
-function summarizeSafetyResult(data: any, setupReady: boolean): SafetyResult {
-  const warnings = (data?.warnings as string[] | undefined) ?? [];
-  const warningText = warnings.length ? warnings.map(translateBackendError).join(' ') : 'No blocking issues detected.';
-  const failed = !Boolean(data?.dryRun);
-  const backupState: SafetyResult['backupState'] = failed ? 'Failed' : ((data?.backupPlan?.length ?? 0) > 0 ? 'Ready' : 'Unknown');
-  const targetSnapshot: SafetyResult['targetSnapshot'] = failed ? 'Failed' : ((data?.restorePlan?.length ?? 0) > 0 ? 'Ready' : 'Missing');
-  const codexClosedState: SafetyResult['codexClosedState'] = warnings.some((w) => /closed/i.test(w)) ? 'Required' : 'Ready';
-  const setupState: SafetyResult['setupState'] = setupReady ? 'Complete' : 'Required';
-  const pass = Boolean(data?.dryRun) && setupReady;
-  return {
-    completed: true,
-    pass,
-    backupState,
-    targetSnapshot,
-    codexClosedState,
-    setupState,
-    overall: pass ? 'Safe to switch' : 'Fix setup first',
-    warningText,
-  };
 }
 
 export default function App() {
@@ -352,23 +338,23 @@ export default function App() {
   const runSafetyCheck = async (profileId: string) => {
     setSwitchBusy(true);
     try {
-      const res = await fetch(`/api/profiles/${profileId}/switch/dry-run`, {
+      const res = await fetch(`/api/profiles/${profileId}/safety-check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
+      const data = await res.json() as SafetyResult;
       if (!res.ok) {
-        setSafetyResult(summarizeSafetyResult({ dryRun: false, warnings: [data?.error ?? 'Safety check failed'] }, setupReady));
+        setFriendlyError('Could not run Safety Check right now. Please try again.');
         return;
       }
-      setSafetyResult(summarizeSafetyResult(data, setupReady));
+      setSafetyResult(data);
     } finally {
       setSwitchBusy(false);
     }
   };
 
-  const canSwitchAccount = Boolean(selectedAccount && safetyResult?.completed && safetyResult.pass && switchConfirm);
+  const canSwitchAccount = Boolean(selectedAccount && safetyResult?.canSwitch && switchConfirm);
 
   const switchAccountNow = async () => {
     if (!selectedAccount) return;
@@ -388,6 +374,11 @@ export default function App() {
     setSafetyResult(null);
     await load();
   };
+
+  useEffect(() => {
+    if (!switchModalOpen || !selectedAccount) return;
+    void runSafetyCheck(selectedAccount.id);
+  }, [switchModalOpen, selectedAccount?.id]);
 
   const openUsageModal = async (profileId: string) => {
     setUsageForm((s) => ({ ...s, profileId }));
@@ -462,35 +453,40 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#06080B] text-zinc-100">
-      <div className="mx-auto max-w-[1240px] p-4 md:p-6">
-        <header className={`${cardClass} mb-4 border-cyan-500/20`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#102033_0%,#06080B_48%,#04060A_100%)] text-zinc-100">
+      <div className="mx-auto max-w-[1240px] px-4 py-6 md:px-6 md:py-8">
+        <header className={`${cardClass} mb-5 border-cyan-500/25`}>
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-emerald-300">Codex Carousel V1.0</h1>
-              <div className="mt-1 text-xs text-zinc-400">
-                Current Account: <span className="text-zinc-100">{active?.alias ?? 'None selected'}</span>
+              <p className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">Local Account Switcher</p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-zinc-100">Codex Carousel V1.0</h1>
+              <div className="mt-2 text-sm text-zinc-400">
+                Current Account: <span className="font-medium text-zinc-100">{active?.alias ?? 'None selected'}</span>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge label={`Backend: ${health?.ok ? 'Online' : 'Offline'}`} tone={health?.ok ? 'ok' : 'bad'} />
               <StatusBadge label={setupReady ? 'Setup Complete' : 'Setup Required'} tone={setupReady ? 'ok' : 'warn'} />
-              {!setupReady && <button className="rounded-lg border border-amber-500/70 px-3 py-2 text-sm text-amber-200" onClick={() => setSetupWizardOpen(true)}>Set Up Codex</button>}
-              <button className="rounded-lg border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950" onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
-              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500" onClick={openCodex}>Open Codex</button>
-              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500" onClick={() => setAdvancedOpen(true)} aria-label="Advanced Settings">⚙</button>
             </div>
           </div>
-          {friendlyError && <div className="mt-3 rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-sm text-rose-100">{friendlyError}</div>}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {!setupReady && <button className={buttonSecondaryClass} onClick={() => setSetupWizardOpen(true)}>Set Up Codex</button>}
+            <button className={buttonPrimaryClass} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
+            <button className={buttonSecondaryClass} onClick={openCodex}>Open Codex</button>
+            <button className={buttonSecondaryClass} onClick={() => setAdvancedOpen(true)} aria-label="Advanced Settings">Advanced Settings</button>
+          </div>
+
+          {friendlyError && <div className="mt-4 rounded-xl border border-rose-500/50 bg-rose-900/20 px-4 py-2.5 text-sm text-rose-100">{friendlyError}</div>}
           {accountSavedNotice && (
-            <div className="mt-3 rounded-lg border border-emerald-500/50 bg-emerald-900/20 px-3 py-2 text-sm text-emerald-100">
+            <div className="mt-4 rounded-xl border border-emerald-500/50 bg-emerald-900/20 px-4 py-2.5 text-sm text-emerald-100">
               {accountSavedNotice}. Saved locally. Verify by opening Codex.
               <button className="ml-2 underline" onClick={() => setAccountSavedNotice(null)}>Dismiss</button>
             </div>
           )}
           {!setupReady && (
-            <div className="mt-3 rounded-lg border border-amber-500/60 bg-amber-900/20 px-3 py-2 text-sm text-amber-100">
+            <div className="mt-4 rounded-xl border border-amber-500/60 bg-amber-900/20 px-4 py-2.5 text-sm text-amber-100">
               Setup required. Connect Codex before saving accounts.
               <button className="ml-2 underline" onClick={() => setSetupWizardOpen(true)}>Set Up Codex</button>
             </div>
@@ -498,20 +494,20 @@ export default function App() {
         </header>
 
         {savedCount === 0 ? (
-          <section className={cardClass}>
-            <h2 className="text-lg font-semibold text-zinc-100">No Codex accounts saved yet.</h2>
-            <p className="mt-2 text-sm text-zinc-400">Add your first account by logging into Codex, then saving that login here.</p>
-            <button className="mt-4 rounded-lg border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950" onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
+          <section className={`${cardClass} border-zinc-700`}>
+            <h2 className="text-xl font-semibold text-zinc-100">No Codex accounts saved yet</h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-400">Add your first account by opening Codex, signing in, then saving that login in the Add Account flow.</p>
+            <button className={`mt-5 ${buttonPrimaryClass}`} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
           </section>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[1fr_1.6fr]">
-            <aside className="space-y-4">
+          <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
+            <aside className="space-y-5">
               <section className={cardClass}>
-                <h2 className="mb-3 text-sm font-semibold text-zinc-300">Current Account</h2>
+                <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Current Account</h2>
                 {active ? (
-                  <div className="space-y-3 text-sm">
+                  <div className="space-y-4 text-sm">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-900/50 font-semibold text-cyan-200">{active.alias[0]?.toUpperCase() ?? '?'}</div>
+                      <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-900/35 font-semibold text-cyan-200">{active.alias[0]?.toUpperCase() ?? '?'}</div>
                       <div>
                         <div className="font-medium text-zinc-100">{active.alias}</div>
                         <div className="text-xs text-zinc-400">{active.plan}</div>
@@ -521,7 +517,7 @@ export default function App() {
                       <StatusBadge label={activeProfileId === active.id ? 'Active' : 'Ready'} tone="ok" />
                       <StatusBadge label={setupReady ? 'Ready' : 'Setup Required'} tone={setupReady ? 'ok' : 'warn'} />
                     </div>
-                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-300">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 text-xs leading-relaxed text-zinc-300">
                       <div>Observed usage: {active.fiveHourStatus} / {active.weeklyStatus} / {active.creditsStatus}</div>
                       <div className="mt-1">Recommendation: {friendlyRecommendation(active)}</div>
                       <div className="mt-1">Last used: {active.lastActivatedAt ?? 'Unknown'}</div>
@@ -531,92 +527,72 @@ export default function App() {
               </section>
 
               <section className={cardClass}>
-                <h2 className="mb-2 text-sm font-semibold text-zinc-300">Recommendation</h2>
-                <p className="text-sm text-zinc-200">{friendlyRecommendation(active)}</p>
+                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-zinc-400">Recommendation</h2>
+                <p className="text-sm leading-relaxed text-zinc-200">{friendlyRecommendation(active)}</p>
               </section>
 
               <section className={cardClass}>
-                <h2 className="mb-2 text-sm font-semibold text-zinc-300">Recent Activity</h2>
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">Recent Activity</h2>
                 <div className="space-y-2 text-sm">
-                  {ledger.slice(0, 8).map((evt) => (
-                    <div key={evt.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                  {ledger.slice(0, 6).map((evt) => (
+                    <div key={evt.id} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-2.5">
                       <div className="text-zinc-200">{toFriendlyActivity(evt)}</div>
-                      <div className="text-xs text-zinc-500">{evt.timestamp}</div>
+                      <div className="mt-0.5 text-xs text-zinc-500">{evt.timestamp}</div>
                     </div>
                   ))}
                 </div>
               </section>
             </aside>
 
-            <main className="space-y-4">
+            <main className="space-y-5">
               <section className={cardClass}>
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-zinc-300">Saved Accounts</h2>
-                  <span className="text-xs text-zinc-500">{savedCount} accounts</span>
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-zinc-200">Saved Accounts</h2>
+                  <span className={chipClass}>{savedCount} accounts</span>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="text-xs text-zinc-400">
-                      <tr className="border-b border-zinc-800">
-                        <th className="px-2 py-2">Account</th>
-                        <th className="px-2 py-2">Plan</th>
-                        <th className="px-2 py-2">Login Saved</th>
-                        <th className="px-2 py-2">Usage Status</th>
-                        <th className="px-2 py-2">Verification</th>
-                        <th className="px-2 py-2">Last Used</th>
-                        <th className="px-2 py-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {profiles.map((p) => (
-                        <tr key={p.id} className={`border-b border-zinc-900 ${p.id === activeProfileId ? 'bg-cyan-950/20' : ''}`}>
-                          <td className="px-2 py-3">
-                            <div className="font-medium text-zinc-100">{p.alias}</div>
-                            <div className="mt-1 flex gap-2">
-                              <input
-                                className="w-40 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
-                                value={renameDrafts[p.id] ?? ''}
-                                onChange={(e) => setRenameDrafts((m) => ({ ...m, [p.id]: e.target.value }))}
-                                placeholder="Rename"
-                              />
-                              <button className="rounded border border-zinc-600 px-2 py-1 text-xs text-zinc-200" onClick={() => renameAccount(p)}>Rename</button>
-                            </div>
-                          </td>
-                          <td className="px-2 py-3 text-zinc-300">{p.plan}</td>
-                          <td className="px-2 py-3 text-zinc-300">{p.snapshotStatus === 'Captured' ? 'Yes' : 'Unknown'}</td>
-                          <td className="px-2 py-3 text-zinc-300">{p.fiveHourStatus}/{p.weeklyStatus}/{p.creditsStatus}</td>
-                          <td className="px-2 py-3 text-zinc-300">{p.verificationStatus}</td>
-                          <td className="px-2 py-3 text-zinc-300">{p.lastActivatedAt ?? 'Unknown'}</td>
-                          <td className="px-2 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                className="rounded border border-emerald-500/70 px-2 py-1 text-xs text-emerald-200"
-                                onClick={() => {
-                                  setSelectedAccount(p);
-                                  setSwitchConfirm(false);
-                                  setSafetyResult(null);
-                                  setSwitchModalOpen(true);
-                                }}
-                              >
-                                Switch Account
-                              </button>
-                              <button className="rounded border border-cyan-500/70 px-2 py-1 text-xs text-cyan-200" onClick={() => openUsageModal(p.id)}>Update Usage</button>
-                              <button
-                                className="rounded border border-zinc-600 px-2 py-1 text-xs text-zinc-200"
-                                onClick={() => {
-                                  setSelectedAccount(p);
-                                  setSwitchModalOpen(true);
-                                  runSafetyCheck(p.id);
-                                }}
-                              >
-                                Safety Check
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {profiles.map((p) => (
+                    <article key={p.id} className={`rounded-xl border p-4 ${p.id === activeProfileId ? 'border-cyan-500/60 bg-cyan-950/25' : 'border-zinc-800 bg-zinc-900/55'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-semibold text-zinc-100">{p.alias}</h3>
+                          <p className="mt-1 text-xs text-zinc-400">{p.plan}</p>
+                        </div>
+                        <span className={chipClass}>{p.snapshotStatus === 'Captured' ? 'Login Saved' : 'Login Unknown'}</span>
+                      </div>
+                      <div className="mt-3 space-y-1 text-xs text-zinc-400">
+                        <div>Usage: {p.fiveHourStatus}/{p.weeklyStatus}/{p.creditsStatus}</div>
+                        <div>Verification: {p.verificationStatus}</div>
+                        <div>Last used: {p.lastActivatedAt ?? 'Unknown'}</div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          className="rounded-lg border border-emerald-500/70 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-900/35"
+                          onClick={() => {
+                            setSelectedAccount(p);
+                            setSwitchConfirm(false);
+                            setSafetyResult(null);
+                            setSwitchModalOpen(true);
+                          }}
+                        >
+                          Switch
+                        </button>
+                        <button className="rounded-lg border border-cyan-500/70 bg-cyan-900/20 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-900/35" onClick={() => openUsageModal(p.id)}>Update Usage</button>
+                      </div>
+                      <div className="mt-3 border-t border-zinc-800 pt-3">
+                        <label className="text-xs text-zinc-400">Rename account</label>
+                        <div className="mt-1.5 flex gap-2">
+                          <input
+                            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs"
+                            value={renameDrafts[p.id] ?? ''}
+                            onChange={(e) => setRenameDrafts((m) => ({ ...m, [p.id]: e.target.value }))}
+                            placeholder="New name"
+                          />
+                          <button className="rounded-lg border border-zinc-600 px-2.5 py-1.5 text-xs text-zinc-200" onClick={() => renameAccount(p)}>Save</button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               </section>
             </main>
@@ -753,19 +729,23 @@ export default function App() {
           <div className="mx-auto mt-16 max-w-xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5">
             <h3 className="text-lg font-semibold text-zinc-100">Switch Account</h3>
             <p className="mt-1 text-sm text-zinc-300">Target account: <span className="font-medium text-zinc-100">{selectedAccount.alias}</span></p>
+            <p className="mt-2 text-sm text-zinc-300">Codex Carousel will back up the current account and switch to <span className="font-medium text-zinc-100">{selectedAccount.alias}</span>. Close Codex before continuing.</p>
 
             <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 text-sm">
-              <div>Current account backup: <span className="text-zinc-200">{safetyResult?.backupState ?? 'Unknown'}</span></div>
-              <div>Target account snapshot: <span className="text-zinc-200">{safetyResult?.targetSnapshot ?? 'Unknown'}</span></div>
-              <div>Codex closed: <span className="text-zinc-200">{safetyResult?.codexClosedState ?? 'Unknown'}</span></div>
-              <div>Setup: <span className="text-zinc-200">{safetyResult?.setupState ?? (setupReady ? 'Complete' : 'Required')}</span></div>
-              <div className="mt-1 font-medium text-cyan-200">Overall: {safetyResult?.overall ?? 'Run Safety Check first'}</div>
-              {safetyResult?.warningText && <div className="mt-1 text-xs text-zinc-400">{safetyResult.warningText}</div>}
+              {(safetyResult?.checks ?? []).map((check) => (
+                <div key={check.label} className="mt-1 first:mt-0">
+                  {check.label}: <span className="text-zinc-200">{check.label === 'Codex status' && check.status === 'Ready' ? 'Closed' : check.label === 'Setup' && check.status === 'Ready' ? 'Complete' : check.label === 'Setup' && check.status === 'Warning' ? 'Required' : check.label === 'Result' && check.status === 'Ready' ? 'Safe to switch' : check.label === 'Result' ? 'Fix setup first' : check.status}</span>
+                </div>
+              ))}
+              {(!safetyResult || safetyResult.checks.length === 0) && <div>Run Safety Check to verify switching safety.</div>}
+              {safetyResult?.warnings?.map((warning, idx) => (
+                <div key={`${warning}-${idx}`} className="mt-1 text-xs text-zinc-400">{warning}</div>
+              ))}
             </div>
 
             <label className="mt-3 flex items-center gap-2 text-sm text-zinc-300">
               <input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} />
-              I confirm I want to switch accounts.
+              I understand Codex should be closed before switching.
             </label>
 
             <div className="mt-4 flex flex-wrap justify-end gap-2">

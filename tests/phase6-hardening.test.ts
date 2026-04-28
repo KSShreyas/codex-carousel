@@ -62,6 +62,43 @@ describe('Phase 6 hardening checks', () => {
     expect(store.getSettings().localSwitchingEnabled).toBe(false);
   });
 
+  it('startup guard disables switching when codexProfileRootPath is missing or invalid', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'carousel-guard-'));
+    await fs.promises.writeFile(path.join(root, 'durable-state.json'), JSON.stringify({
+      schemaVersion: 2,
+      profiles: [],
+      usageSnapshots: [],
+      switchEvents: [],
+      settings: {
+        schemaVersion: 2,
+        activeProfileId: null,
+        demoMode: false,
+        localSwitchingEnabled: true,
+        codexProfileRootPath: path.join(root, 'does-not-exist'),
+        codexLaunchCommand: null,
+        requireCodexClosedBeforeSwitch: true,
+        allowProcessStop: false,
+        autoLaunchAfterSwitch: false,
+        redactSensitivePathsInLogs: true,
+      },
+      profileSnapshotMetadata: {},
+    }, null, 2));
+
+    const store = new DurableStore(root);
+    await store.load();
+    expect(store.getSettings().localSwitchingEnabled).toBe(false);
+    expect(store.getLedger().some((evt) => evt.severity === 'warning' && /switching disabled on startup/i.test(evt.message))).toBe(true);
+  });
+
+  it('gitignore contains runtime state hygiene rules', () => {
+    const gitignore = fs.readFileSync('.gitignore', 'utf-8');
+    expect(gitignore).toContain('state/');
+    expect(gitignore).toContain('logs/');
+    expect(gitignore).toContain('profile-snapshots/');
+    expect(gitignore).toContain('rollbacks/');
+    expect(gitignore).toContain('temp-validation/');
+  });
+
   it('logger redacts secret-like values', async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'carousel-log-'));
     logger.setLogFile(path.join(root, 'test.jsonl'));

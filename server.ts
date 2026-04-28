@@ -15,6 +15,7 @@ import { LimitStatus, ProfilePlan, SnapshotStatus, SwitchEventType, UsageSnapsho
 import { SwitchEngine } from './src/carousel/switchEngine';
 import { CodexDiscoveryService } from './src/carousel/codexDiscovery';
 import { applyCodexSetup } from './src/carousel/codexSetup';
+import { buildFailedSafetyCheck, buildFriendlySafetyCheck } from './src/carousel/safetyCheck';
 
 function parsePlan(input: any): ProfilePlan {
   return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
@@ -35,7 +36,7 @@ function parseBoolean(input: any, fallback: boolean): boolean {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.CAROUSEL_PORT ?? 3000);
   app.use(express.json());
 
   const config = loadConfig();
@@ -384,6 +385,19 @@ async function startServer() {
       res.json(result);
     } catch (error) {
       res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.post('/api/profiles/:id/safety-check', async (req, res) => {
+    const targetProfileId = req.params.id;
+    const profile = store.getProfile(targetProfileId);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+    try {
+      const dryRun = await switchEngine.dryRunSwitch(targetProfileId, { reason: 'ui-safety-check' });
+      res.json(buildFriendlySafetyCheck(dryRun, targetProfileId));
+    } catch (error) {
+      res.json(buildFailedSafetyCheck(targetProfileId, error));
     }
   });
 

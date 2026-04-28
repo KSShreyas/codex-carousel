@@ -18,11 +18,17 @@ export function translateBackendError(input: string): string {
     return 'Setup required. Complete Codex setup before saving or switching accounts.';
   }
   if (/codex process appears to be running/i.test(value)) {
-    return 'Close Codex and try again, or finish login and then save this account.';
+    return 'Codex appears to be open. Close it before switching.';
   }
   if (/no codex profile files discovered/i.test(value)) {
     return 'Could not find Codex login data. Open Codex, login, then try Save This Account again.';
   }
+  if (/preflight failed|dry-run produced warnings|switch lock exists/i.test(value)) {
+    return 'Safety Check failed. Fix setup issues, close Codex, then try again.';
+  }
+  if (/real switch failed|could not switch account/i.test(value)) {
+    return 'Could not switch account. Run Safety Check and try again.';
+  }
 
-  return value;
+  return 'Something went wrong. Please try again.';
 }

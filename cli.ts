@@ -31,26 +31,27 @@ async function call(path: string, init?: RequestInit) {
   return data;
 }
 
-function normalizeSwitchArgs(argv: string[]): string[] {
-  const normalized = [...argv];
-  const switchIndex = normalized.findIndex((token, idx) => idx > 1 && token === 'switch');
-  if (switchIndex === -1) return normalized;
-
-  const tokenAfterSwitch = normalized[switchIndex + 1];
-  const named = new Set(['dry-run', 'status', 'clear-lock', 'run', '--help', '-h']);
-  if (!tokenAfterSwitch || tokenAfterSwitch.startsWith('-') || named.has(tokenAfterSwitch)) return normalized;
-
-  normalized.splice(switchIndex + 1, 0, 'run');
-  return normalized;
-}
-
-async function resolveProfileId(profileOrAlias: string) {
+async function resolveProfileId(profileIdOrAlias: string) {
+  const needle = profileIdOrAlias.trim();
   const rows = await call('/profiles');
-  const match = rows.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
-  if (!match) {
-    throw new Error(`Profile not found for: ${profileOrAlias}`);
+
+  const byId = rows.find((p: any) => p.id === needle);
+  if (byId) return byId.id as string;
+
+  const aliasExact = rows.filter((p: any) => p.alias === needle);
+  if (aliasExact.length === 1) return aliasExact[0].id as string;
+  if (aliasExact.length > 1) {
+    throw new Error(`Alias is ambiguous: ${needle}. Use the profile ID instead.`);
   }
-  return match.id as string;
+
+  const lower = needle.toLowerCase();
+  const aliasCaseInsensitive = rows.filter((p: any) => typeof p.alias === 'string' && p.alias.toLowerCase() === lower);
+  if (aliasCaseInsensitive.length === 1) return aliasCaseInsensitive[0].id as string;
+  if (aliasCaseInsensitive.length > 1) {
+    throw new Error(`Alias is ambiguous: ${needle}. Use the profile ID instead.`);
+  }
+
+  throw new Error(`Profile not found for: ${profileIdOrAlias}`);
 }
 
 async function executeSwitchRun(profileOrAlias: string, options: { fixtureRootDir?: string }) {
@@ -227,10 +228,11 @@ program.command('doctor').action(async () => {
 
 const switchCmd = program.command('switch').description('Profile switch dry-run and lock operations');
 
-switchCmd.command('dry-run <profileId>')
+switchCmd.command('dry-run <profileOrAlias>')
   .option('--fixture-root-dir <fixtureRootDir>')
-  .action(async (profileId, options) => {
-    const data = await call(`/profiles/${profileId}/switch/dry-run`, {
+  .action(async (profileOrAlias, options) => {
+    const targetProfileId = await resolveProfileId(profileOrAlias);
+    const data = await call(`/profiles/${targetProfileId}/switch/dry-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -286,4 +288,4 @@ switchCmd.command('run <profileOrAlias>')
     await executeSwitchRun(profileOrAlias, options);
   });
 
-program.parse(normalizeSwitchArgs(process.argv));
+program.parse(process.argv);
