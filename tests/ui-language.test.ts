@@ -45,10 +45,18 @@ describe('Phase 8 simplified UI regression protections', () => {
     expect(app).toContain('await load();');
   });
 
+  it('does not render raw dry-run internals in switch modal', () => {
+    expect(app).not.toContain('backupPlan');
+    expect(app).not.toContain('restorePlan');
+    expect(app).not.toContain('switch.lock');
+    expect(app).not.toContain('fixtureRootDir');
+  });
+
   it('requires safety check and confirmation before switching', () => {
-    expect(app).toContain('const canSwitchAccount = Boolean(selectedAccount && safetyResult?.completed && safetyResult.pass && switchConfirm);');
+    expect(app).toContain('const canSwitchAccount = Boolean(selectedAccount && safetyResult?.canSwitch && switchConfirm);');
     expect(app).toContain('disabled={!canSwitchAccount}');
-    expect(app).toContain('I confirm I want to switch accounts.');
+    expect(app).toContain('I understand Codex should be closed before switching.');
+    expect(app).not.toContain('/switch/dry-run');
   });
 
   it('visual validation assets still exist', () => {

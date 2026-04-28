@@ -11,7 +11,6 @@ Phase 7 implements code + test fixes for both blockers. Real profile switching w
 
 ## Required local re-validation
 - Validate `switch run <profile> --confirm` on the real machine.
-- Validate compatibility `switch <profile> --confirm` on the real machine.
 - Validate switch behavior with real `codexProfileRootPath` and Codex process state.
 - Validate no sensitive leaks in API/UI/CLI/logs during real switch operations.
 - Validate restart persistence for profiles/settings/ledger.

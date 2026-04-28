@@ -5,8 +5,10 @@ import { spawn } from 'child_process';
 
 type Profile = { id: string; alias: string };
 
-const profiles: Profile[] = [{ id: 'profile_1', alias: 'alpha' }];
+const profiles: Profile[] = [{ id: 'profile_1', alias: 'Shreyas Pro' }];
 const switchCalls: Array<{ targetId: string; confirm: boolean }> = [];
+const dryRunCalls: string[] = [];
+const statusCalls: number[] = [];
 let server: http.Server;
 let apiBase: string;
 
@@ -25,7 +27,7 @@ function runCli(args: string[]) {
   });
 }
 
-describe('CLI documented switch command', () => {
+describe('CLI switch command', () => {
   beforeAll(async () => {
     server = http.createServer((req, res) => {
       const url = req.url || '/';
@@ -47,6 +49,20 @@ describe('CLI documented switch command', () => {
         return;
       }
 
+      if (req.method === 'POST' && url === '/api/profiles/profile_1/switch/dry-run') {
+        dryRunCalls.push(url);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ targetProfileId: 'profile_1', backupPlan: [{}], restorePlan: [{}], warnings: [] }));
+        return;
+      }
+
+      if (req.method === 'GET' && url === '/api/switch/status') {
+        statusCalls.push(Date.now());
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ locked: false, stale: false }));
+        return;
+      }
+
       res.statusCode = 404;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: 'not found' }));
@@ -61,17 +77,36 @@ describe('CLI documented switch command', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('accepts switch run <profile> --confirm', async () => {
-    const result = await runCli(['switch', 'run', 'alpha', '--confirm']);
+  it('help shows explicit switch run command', async () => {
+    const result = await runCli(['switch', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('run [options] <profileOrAlias>');
+  });
+
+  it('switch run without --confirm fails', async () => {
+    const result = await runCli(['switch', 'run', 'Shreyas Pro']);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("required option '--confirm'");
+  });
+
+  it('switch run with --confirm reaches backend endpoint', async () => {
+    const result = await runCli(['switch', 'run', 'Shreyas Pro', '--confirm']);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Switch success. Active profile: profile_1');
     expect(switchCalls.at(-1)).toEqual({ targetId: 'profile_1', confirm: true });
   });
 
-  it('accepts switch <profile> --confirm compatibility path', async () => {
-    const result = await runCli(['switch', 'alpha', '--confirm']);
+  it('dry-run still works with alias', async () => {
+    const result = await runCli(['switch', 'dry-run', 'Shreyas Pro']);
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('Switch success. Active profile: profile_1');
-    expect(switchCalls.at(-1)).toEqual({ targetId: 'profile_1', confirm: true });
+    expect(result.stdout).toContain('=== SWITCH DRY-RUN ===');
+    expect(dryRunCalls.length).toBeGreaterThan(0);
+  });
+
+  it('status still works', async () => {
+    const result = await runCli(['switch', 'status']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('=== SWITCH STATUS ===');
+    expect(statusCalls.length).toBeGreaterThan(0);
   });
 });
