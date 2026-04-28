@@ -24,10 +24,10 @@ describe('Phase 8 simplified UI regression protections', () => {
     expect(app).toContain('Setup Required');
     expect(app).toContain('Set Up Codex');
     expect(app).toContain('Open Codex Login');
-    expect(app).toContain('I Logged In');
+    expect(app).toContain('I Signed In');
     expect(app).toContain('Account Name');
-    expect(app).toContain('Account Saved');
-    expect(app).toContain('Ready to Switch');
+    expect(app).toContain('Account saved. You can now switch to it.');
+    expect(app).toContain('Check Again');
   });
 
   it('contains required modal and drawer components', () => {
@@ -36,8 +36,8 @@ describe('Phase 8 simplified UI regression protections', () => {
     expect(app).toContain('Switch Account');
     expect(app).toContain('Advanced Settings');
     expect(app).toContain('Set Up Codex');
-    expect(app).toContain('Setup check');
-    expect(app).toContain('Account details');
+    expect(app).toContain('Step 1: Open Codex');
+    expect(app).toContain('Step 4: Save This Account');
   });
 
   it('uses friendly add-account endpoint alias in UI flow', () => {
