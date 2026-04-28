@@ -70,7 +70,7 @@ async function startBackendIfNeeded() {
 }
 
 async function clickRowAction(page: Page, actionName: string) {
-  const actionButton = page.locator('tbody tr').first().getByRole('button', { name: actionName });
+  const actionButton = page.getByRole('button', { name: actionName }).first();
   await actionButton.click();
 }
 

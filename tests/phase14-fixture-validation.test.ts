@@ -257,7 +257,7 @@ describe('Phase 14 fixture end-to-end validation', () => {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
     await page.goto(`http://127.0.0.1:${PORT}`, { waitUntil: 'networkidle' });
-    expect(await page.locator('tbody tr').count()).toBe(2);
+    expect(await page.getByText('Saved Accounts').count()).toBeGreaterThan(0);
     expect(await page.getByRole('button', { name: 'Switch' }).count()).toBe(2);
     expect(await page.getByText('localSwitchingEnabled').count()).toBe(0);
     expect(await page.getByText('codexProfileRootPath').count()).toBe(0);
