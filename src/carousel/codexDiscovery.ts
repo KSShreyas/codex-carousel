@@ -1,0 +1,176 @@
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+
+export type DiscoveryCandidate = {
+  kind: 'profileRoot' | 'packageRoot' | 'launchCommand';
+  pathOrCommand: string;
+  exists: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  safeForLogs: true;
+};
+
+export type CodexDiscoveryResult = {
+  os: NodeJS.Platform;
+  candidates: DiscoveryCandidate[];
+  recommendedProfileRootPath: string | null;
+  recommendedLaunchCommand: string | null;
+  setupComplete: boolean;
+  warnings: string[];
+};
+
+export type DiscoverySettings = {
+  codexProfileRootPath?: string | null;
+  codexLaunchCommand?: string | null;
+  localSwitchingEnabled?: boolean;
+};
+
+type FsLike = Pick<typeof fs, 'access' | 'readdir'>;
+
+export class CodexDiscoveryService {
+  constructor(private fileSystem: FsLike = fs, private platform: NodeJS.Platform = process.platform, private env: NodeJS.ProcessEnv = process.env) {}
+
+  private async pathExists(target: string): Promise<boolean> {
+    if (!target) return false;
+    try {
+      await this.fileSystem.access(target);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async countEntries(target: string): Promise<number> {
+    try {
+      const rows = await this.fileSystem.readdir(target);
+      return rows.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  private getWindowsCandidates(configuredPath?: string | null) {
+    const localAppData = this.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local');
+    const appData = this.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
+    const packageRoot = path.join(localAppData, 'Packages');
+    const base: string[] = [
+      path.join(appData, 'Codex'),
+      path.join(localAppData, 'Codex'),
+    ];
+
+    if (configuredPath) base.unshift(configuredPath);
+
+    return {
+      packageRoot,
+      profileRoots: base,
+      storeSubdirs: ['LocalState', 'RoamingState', 'LocalCache', 'TempState'],
+    };
+  }
+
+  async discover(settings: DiscoverySettings): Promise<CodexDiscoveryResult> {
+    const candidates: DiscoveryCandidate[] = [];
+    const warnings: string[] = [];
+    const windows = this.getWindowsCandidates(settings.codexProfileRootPath);
+
+    const packageExists = await this.pathExists(windows.packageRoot);
+    candidates.push({
+      kind: 'packageRoot',
+      pathOrCommand: windows.packageRoot,
+      exists: packageExists,
+      confidence: this.platform === 'win32' ? 'high' : 'low',
+      reason: packageExists ? 'Windows package directory exists.' : 'Windows package directory not found.',
+      safeForLogs: true,
+    });
+
+    if (packageExists) {
+      const packageNames = await this.fileSystem.readdir(windows.packageRoot).catch(() => [] as string[]);
+      const codexPackages = packageNames.filter((name) => name.toLowerCase().startsWith('openai.codex_'));
+      for (const pkgName of codexPackages) {
+        const pkgPath = path.join(windows.packageRoot, pkgName);
+        candidates.push({
+          kind: 'packageRoot',
+          pathOrCommand: pkgPath,
+          exists: true,
+          confidence: 'high',
+          reason: 'Codex Store package directory found.',
+          safeForLogs: true,
+        });
+
+        for (const subdir of windows.storeSubdirs) {
+          const subdirPath = path.join(pkgPath, subdir);
+          const exists = await this.pathExists(subdirPath);
+          const fileCount = exists ? await this.countEntries(subdirPath) : 0;
+          candidates.push({
+            kind: 'profileRoot',
+            pathOrCommand: subdirPath,
+            exists,
+            confidence: exists ? 'high' : 'low',
+            reason: exists ? `${subdir} exists (${fileCount} entries).` : `${subdir} is missing.`,
+            safeForLogs: true,
+          });
+        }
+      }
+    }
+
+    for (const profileRoot of windows.profileRoots) {
+      const exists = await this.pathExists(profileRoot);
+      const fileCount = exists ? await this.countEntries(profileRoot) : 0;
+      candidates.push({
+        kind: 'profileRoot',
+        pathOrCommand: profileRoot,
+        exists,
+        confidence: exists ? 'medium' : 'low',
+        reason: exists ? `Directory found (${fileCount} entries).` : 'Directory not found.',
+        safeForLogs: true,
+      });
+    }
+
+    if (settings.codexLaunchCommand) {
+      candidates.push({
+        kind: 'launchCommand',
+        pathOrCommand: settings.codexLaunchCommand,
+        exists: true,
+        confidence: 'high',
+        reason: 'Using configured launch command.',
+        safeForLogs: true,
+      });
+    } else if (packageExists && this.platform === 'win32') {
+      candidates.push({
+        kind: 'launchCommand',
+        pathOrCommand: 'start shell:AppsFolder\\OpenAI.Codex',
+        exists: true,
+        confidence: 'medium',
+        reason: 'Windows Store package detected; shell launch command may work.',
+        safeForLogs: true,
+      });
+    } else {
+      candidates.push({
+        kind: 'launchCommand',
+        pathOrCommand: '',
+        exists: false,
+        confidence: 'low',
+        reason: 'Launch command not detected. Manual setup needed.',
+        safeForLogs: true,
+      });
+      warnings.push('Codex app path is not configured. Set it in setup to enable Open Codex.');
+    }
+
+    const recommendedProfileRootPath = candidates.find((c) => c.kind === 'profileRoot' && c.exists && (c.confidence === 'high' || c.confidence === 'medium'))?.pathOrCommand ?? null;
+    const recommendedLaunchCommand = candidates.find((c) => c.kind === 'launchCommand' && c.exists)?.pathOrCommand || null;
+    const setupComplete = Boolean(settings.localSwitchingEnabled && recommendedProfileRootPath);
+
+    if (!recommendedProfileRootPath) {
+      warnings.push('Codex data folder was not found automatically. Choose it manually in setup.');
+    }
+
+    return {
+      os: this.platform,
+      candidates,
+      recommendedProfileRootPath,
+      recommendedLaunchCommand,
+      setupComplete,
+      warnings,
+    };
+  }
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 
-describe('Phase 5 switch API/CLI/UI wiring', () => {
+describe('switch API/CLI/UI wiring', () => {
   const server = fs.readFileSync('server.ts', 'utf-8');
   const cli = fs.readFileSync('cli.ts', 'utf-8');
   const app = fs.readFileSync('src/App.tsx', 'utf-8');
@@ -15,12 +15,12 @@ describe('Phase 5 switch API/CLI/UI wiring', () => {
   it('requires confirmation for real switch pathways', () => {
     expect(server).toContain('confirm = req.body?.confirm === true');
     expect(cli).toContain("requiredOption('--confirm'");
-    expect(app).toContain('Confirm real switch');
+    expect(app).toContain('I confirm I want to switch accounts.');
   });
 
   it('includes launch API and CLI command', () => {
     expect(server).toContain('/api/codex/launch');
     expect(cli).toContain("program.command('launch')");
-    expect(app).toContain('Launch Codex');
+    expect(app).toContain('Open Codex');
   });
 });
