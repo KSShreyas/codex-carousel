@@ -25,12 +25,12 @@ describe('backend error translation helper', () => {
 
   it('maps capture/save account specific backend errors', () => {
     expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex setup incomplete. Run setup before adding or switching accounts.');
-    expect(translateBackendError('Codex process appears to be running')).toBe('Close Codex and try again, or finish login and then save this account.');
+    expect(translateBackendError('Codex process appears to be running')).toBe('Codex appears to be open. Close it before switching.');
     expect(translateBackendError('No Codex profile files discovered under configured codexProfileRootPath')).toBe('Could not find Codex login data. Open Codex, login, then try Save This Account again.');
   });
 
   it('strips raw Error prefix and falls back gracefully', () => {
-    expect(translateBackendError('Error: Network timeout')).toBe('Network timeout');
+    expect(translateBackendError('Error: Network timeout')).toBe('Something went wrong. Please try again.');
     expect(translateBackendError('')).toBe('Something went wrong. Please try again.');
   });
 });
