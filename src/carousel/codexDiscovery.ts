@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeLaunchCommand } from './launchCommand';
+import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeCodexLaunchCommand } from './launchCommand';
 
 export type DiscoveryCandidate = {
   kind: 'profileRoot' | 'packageRoot' | 'launchCommand';
@@ -134,7 +134,7 @@ export class CodexDiscoveryService {
     if (settings.codexLaunchCommand) {
       candidates.push({
         kind: 'launchCommand',
-        pathOrCommand: normalizeLaunchCommand(settings.codexLaunchCommand) ?? settings.codexLaunchCommand,
+        pathOrCommand: normalizeCodexLaunchCommand(settings.codexLaunchCommand) ?? settings.codexLaunchCommand,
         exists: true,
         confidence: 'high',
         reason: 'Using configured launch command.',

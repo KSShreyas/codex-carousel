@@ -21,7 +21,8 @@ describe('form draft-state protections', () => {
 
   it('ui sends draft settings values and re-syncs after save path exists', () => {
     const app = fs.readFileSync('src/App.tsx', 'utf-8');
-    expect(app).toContain('body: JSON.stringify(toSettingsPatch(settingsDraft))');
+    expect(app).toContain('const patch = toSettingsPatch(settingsDraft);');
+    expect(app).toContain('body: JSON.stringify(patch)');
     expect(app).toContain('setSettingsDraft(adapted);');
   });
 });

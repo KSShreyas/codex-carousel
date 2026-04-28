@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import { DurableStore } from './durableStore';
 import { SwitchEventType } from './types';
-import { normalizeLaunchCommand } from './launchCommand';
+import { normalizeCodexLaunchCommand } from './launchCommand';
 
 export type ApplyCodexSetupInput = {
   codexProfileRootPath: string | null;
@@ -11,7 +11,7 @@ export type ApplyCodexSetupInput = {
 
 export async function applyCodexSetup(store: DurableStore, input: ApplyCodexSetupInput) {
   const profileRoot = input.codexProfileRootPath?.trim() || null;
-  const launchCommand = normalizeLaunchCommand(input.codexLaunchCommand);
+  const launchCommand = normalizeCodexLaunchCommand(input.codexLaunchCommand);
 
   if (input.enableSwitching) {
     if (!profileRoot) {

@@ -1,19 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
-import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeLaunchCommand } from '../src/carousel/launchCommand';
+import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeCodexLaunchCommand } from '../src/carousel/launchCommand';
 
 describe('launch command defaults and normalization', () => {
   it('defaults to Microsoft Store launch command', () => {
-    expect(DEFAULT_CODEX_LAUNCH_COMMAND).toBe('start "" "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"');
+    expect(DEFAULT_CODEX_LAUNCH_COMMAND).toBe('explorer.exe shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App');
   });
 
-  it('accepts and normalizes shell:AppsFolder command', () => {
-    expect(normalizeLaunchCommand('shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App')).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
+  it('normalizes AppID and shell:AppsFolder command', () => {
+    expect(normalizeCodexLaunchCommand('OpenAI.Codex_2p2nqsd0c76g0!App')).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
+    expect(normalizeCodexLaunchCommand('shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App')).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
   });
 
-  it('preserves explicit start command', () => {
+  it('normalizes explicit start command to explorer.exe', () => {
     const cmd = 'start "" "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"';
-    expect(normalizeLaunchCommand(cmd)).toBe(cmd);
+    expect(normalizeCodexLaunchCommand(cmd)).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
+  });
+
+  it('normalizes invalid legacy command', () => {
+    expect(normalizeCodexLaunchCommand('start shell:AppsFolder\\OpenAI.Codex')).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
+    expect(normalizeCodexLaunchCommand('shell:AppsFolder\\OpenAI.Codex')).toBe(DEFAULT_CODEX_LAUNCH_COMMAND);
+  });
+
+  it('preserves normal .exe command', () => {
+    const cmd = 'C:\\Program Files\\Codex\\Codex.exe';
+    expect(normalizeCodexLaunchCommand(cmd)).toBe(cmd);
   });
 
   it('ui keeps raw backend setting names hidden and dashboard without raw command field', () => {
@@ -24,5 +35,7 @@ describe('launch command defaults and normalization', () => {
     expect(app).not.toContain('raw command');
     expect(app).toContain('Open Codex');
     expect(app).not.toContain('Codex app path');
+    expect(app).not.toContain('start shell:AppsFolder\\OpenAI.Codex');
+    expect(app).not.toContain('shell:AppsFolder\\OpenAI.Codex"');
   });
 });

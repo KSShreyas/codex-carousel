@@ -16,6 +16,7 @@ import { SwitchEngine } from './src/carousel/switchEngine';
 import { CodexDiscoveryService } from './src/carousel/codexDiscovery';
 import { applyCodexSetup } from './src/carousel/codexSetup';
 import { buildFailedSafetyCheck, buildFriendlySafetyCheck } from './src/carousel/safetyCheck';
+import { normalizeCodexLaunchCommand } from './src/carousel/launchCommand';
 
 function parsePlan(input: any): ProfilePlan {
   return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
@@ -194,6 +195,7 @@ async function startServer() {
     const current = store.getSettings();
     const payload = {
       ...req.body,
+      codexLaunchCommand: normalizeCodexLaunchCommand(req.body?.codexLaunchCommand),
       localSwitchingEnabled: parseBoolean(req.body?.localSwitchingEnabled, current.localSwitchingEnabled),
       requireCodexClosedBeforeSwitch: parseBoolean(req.body?.requireCodexClosedBeforeSwitch, current.requireCodexClosedBeforeSwitch),
       allowProcessStop: parseBoolean(req.body?.allowProcessStop, current.allowProcessStop),

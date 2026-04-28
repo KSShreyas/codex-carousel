@@ -13,6 +13,7 @@ import {
   LimitStatus,
   ProfilePlan,
 } from './types';
+import { normalizeCodexLaunchCommand } from './launchCommand';
 
 const SCHEMA_VERSION = 2;
 
@@ -84,6 +85,21 @@ export class DurableStore {
     }
   }
 
+  private migrateLegacyLaunchCommand(state: DurableState): boolean {
+    const normalized = normalizeCodexLaunchCommand(state.settings.codexLaunchCommand);
+    if (normalized === state.settings.codexLaunchCommand) return false;
+    state.settings.codexLaunchCommand = normalized;
+    this.appendEvent({
+      eventType: SwitchEventType.SETTINGS_MIGRATED,
+      profileId: state.settings.activeProfileId,
+      targetProfileId: null,
+      severity: 'info',
+      message: 'Codex launch command normalized',
+      metadata: { key: 'codexLaunchCommand' },
+    });
+    return true;
+  }
+
   private defaultState(): DurableState {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -117,6 +133,9 @@ export class DurableStore {
     }
 
     if (this.enforceSafeDefaultSettings(this.state)) {
+      changed = true;
+    }
+    if (this.migrateLegacyLaunchCommand(this.state)) {
       changed = true;
     }
 
@@ -382,6 +401,7 @@ export class DurableStore {
     this.state.settings = {
       ...this.state.settings,
       ...updates,
+      codexLaunchCommand: normalizeCodexLaunchCommand(updates.codexLaunchCommand ?? this.state.settings.codexLaunchCommand),
       schemaVersion: SCHEMA_VERSION,
     };
     await this.save();

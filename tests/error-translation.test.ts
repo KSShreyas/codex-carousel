@@ -3,11 +3,11 @@ import { translateBackendError } from '../src/ui/errorTranslation';
 
 describe('backend error translation helper', () => {
   it('maps setup disabled error to friendly copy', () => {
-    expect(translateBackendError('Local switching is disabled')).toBe('Setup required. Complete Codex setup before saving or switching accounts.');
+    expect(translateBackendError('Local switching is disabled')).toBe('Account switching setup is not complete.');
   });
 
   it('maps missing data folder error to friendly copy', () => {
-    expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex setup incomplete. Run setup before adding or switching accounts.');
+    expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex data folder is not configured. Run setup first.');
   });
 
   it('maps missing launch path error to friendly copy', () => {
@@ -24,9 +24,9 @@ describe('backend error translation helper', () => {
   });
 
   it('maps capture/save account specific backend errors', () => {
-    expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex setup incomplete. Run setup before adding or switching accounts.');
-    expect(translateBackendError('Codex process appears to be running')).toBe('Codex appears to be open. Close it before switching.');
-    expect(translateBackendError('No Codex profile files discovered under configured codexProfileRootPath')).toBe('Could not find Codex login data. Open Codex, login, then try Save This Account again.');
+    expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex data folder is not configured. Run setup first.');
+    expect(translateBackendError('Codex process appears to be running')).toBe('Close Codex, then click Save This Account again.');
+    expect(translateBackendError('No Codex profile files discovered under configured codexProfileRootPath')).toBe('Codex login data was not found in the selected data folder. Open Codex, sign in, then try again. If it still fails, choose another Codex data folder in Advanced Settings.');
   });
 
   it('strips raw Error prefix and falls back gracefully', () => {

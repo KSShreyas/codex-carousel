@@ -36,7 +36,7 @@ If you see **Setup Required**:
 1. Click **Set Up Codex**.
 2. Scan for Codex.
 3. Confirm your Codex data folder.
-4. Confirm your Open Codex command (Microsoft Store default is prefilled).
+4. Confirm your Open Codex command (preferred Microsoft Store value: `explorer.exe shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`).
 5. Save setup.
 
 When setup is complete, switching can be enabled safely.
