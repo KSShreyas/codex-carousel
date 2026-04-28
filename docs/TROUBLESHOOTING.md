@@ -65,3 +65,9 @@ If usage shows unknown values:
 ## Backend not reachable
 - Ensure `npm run dev` is running.
 - Check `http://127.0.0.1:3000/api/health`.
+
+## Add Account says login data was not found
+- In Add Account, run **Check Again** after fully closing Codex.
+- Open Advanced Settings and click **Scan for Codex**.
+- If prompted, use **Choose Detected Folder** and retry.
+- Use `GET /api/codex/profile-root/inspect` to review safe folder metadata.

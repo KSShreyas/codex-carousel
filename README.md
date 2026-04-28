@@ -161,3 +161,19 @@ npx playwright install --with-deps chromium
 ```
 
 Do **not** claim real Windows switching validation from cloud fixture tests alone.
+
+## Local Add Account flow (real user path)
+1. Click **Add Account**.
+2. Click **Open Codex**.
+3. Sign in with ChatGPT/OpenAI.
+4. Close Codex completely.
+5. Click **Check Again**.
+6. Enter account name and click **Save This Account**.
+7. Confirm the new account appears on the dashboard.
+
+## E2E validation
+- Playwright fallback UI tests: `npm run e2e:ui`
+- Screenshot capture: `npm run screenshot`
+- Maestro validation:
+  - `npm run maestro:check`
+  - `npm run maestro:test`

@@ -86,3 +86,12 @@ Note: screenshot binaries are generated artifacts and may not be committed in gi
 - `carousel profiles list`
 - `carousel switch run <profile> --confirm`
 - `carousel doctor`
+
+## Save a Codex account (recommended flow)
+1. Click **Add Account**.
+2. Click **Open Codex**.
+3. Sign in.
+4. Close Codex completely.
+5. Click **Check Again**.
+6. Click **Save This Account**.
+7. Confirm the account appears on the main dashboard.

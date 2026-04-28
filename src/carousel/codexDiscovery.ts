@@ -60,6 +60,7 @@ export class CodexDiscoveryService {
     const base: string[] = [
       path.join(appData, 'Codex'),
       path.join(localAppData, 'Codex'),
+      path.join(this.env.USERPROFILE ?? os.homedir(), '.codex'),
     ];
 
     if (configuredPath) base.unshift(configuredPath);
@@ -67,7 +68,7 @@ export class CodexDiscoveryService {
     return {
       packageRoot,
       profileRoots: base,
-      storeSubdirs: ['LocalState', 'RoamingState', 'LocalCache'],
+      storeSubdirs: ['LocalState', 'RoamingState', 'LocalCache', path.join('LocalCache', 'Roaming'), path.join('LocalCache', 'Local')],
     };
   }
 

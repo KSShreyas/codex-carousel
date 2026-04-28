@@ -1,0 +1,12 @@
+appId: web.codex.carousel
+---
+- openLink: http://127.0.0.1:3000
+- tapOn: Add Account
+- tapOn: Open Codex
+- tapOn: I Signed In
+- tapOn: Check Again
+- tapOn: I closed Codex
+- tapOn: Account Name
+- inputText: Fixture Account A
+- tapOn: Save This Account
+- assertVisible: Fixture Account A

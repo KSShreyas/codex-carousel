@@ -1,0 +1,9 @@
+appId: web.codex.carousel
+---
+- openLink: http://127.0.0.1:3000
+- tapOn: Add Account
+- assertVisible: Add Account
+- assertVisible: Step 1: Open Codex
+- assertVisible: Step 2: Sign In
+- assertVisible: Step 3: Close Codex
+- assertVisible: Step 4: Save Account
