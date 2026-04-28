@@ -70,3 +70,10 @@ Thumbs.db
 # Local runtime state
 state/
 logs/
+profile-snapshots/
+rollbacks/
+temp-validation/
+*.local.json
+test-results/
+playwright-report/
+docs/screenshots/*.png

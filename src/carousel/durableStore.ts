@@ -67,6 +67,23 @@ export class DurableStore {
     return false;
   }
 
+  private async validateSafeSwitchingState(state: DurableState): Promise<{ changed: boolean; reason?: string }> {
+    if (!state.settings.localSwitchingEnabled) return { changed: false };
+    const root = state.settings.codexProfileRootPath;
+    if (!root) {
+      state.settings.localSwitchingEnabled = false;
+      return { changed: true, reason: 'Switching disabled on startup because Codex profile root is not configured.' };
+    }
+
+    try {
+      await fs.access(root);
+      return { changed: false };
+    } catch {
+      state.settings.localSwitchingEnabled = false;
+      return { changed: true, reason: 'Switching disabled on startup because configured Codex profile root does not exist.' };
+    }
+  }
+
   private defaultState(): DurableState {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -101,6 +118,19 @@ export class DurableStore {
 
     if (this.enforceSafeDefaultSettings(this.state)) {
       changed = true;
+    }
+
+    const switchingValidation = await this.validateSafeSwitchingState(this.state);
+    if (switchingValidation.changed) {
+      changed = true;
+      this.appendEvent({
+        eventType: SwitchEventType.SWITCH_FAILED,
+        profileId: this.state.settings.activeProfileId,
+        targetProfileId: null,
+        severity: 'warning',
+        message: switchingValidation.reason ?? 'Switching disabled on startup due to incomplete setup.',
+        metadata: { startupGuard: true },
+      });
     }
 
     if (changed) await this.save();

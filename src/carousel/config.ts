@@ -32,6 +32,10 @@ export const ConfigSchema = z.object({
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const result = ConfigSchema.parse({
     demoMode: process.env.CAROUSEL_DEMO_MODE === 'true',
+    stateDir: process.env.CAROUSEL_STATE_DIR,
+    logDir: process.env.CAROUSEL_LOG_DIR,
+    inboxDir: process.env.CAROUSEL_INBOX_DIR,
+    accountsDir: process.env.CAROUSEL_ACCOUNTS_DIR,
     ...overrides,
   });
   
