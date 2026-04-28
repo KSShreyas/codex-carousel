@@ -1,4 +1,4 @@
-# Screenshot Review (Phase 13)
+# Screenshot Review
 
 Date: 2026-04-28
 
@@ -20,13 +20,19 @@ Screenshot set:
 - Advanced Settings: **PASS**
   - Technical details isolated to drawer; main dashboard stays product-facing.
 
-## Issues found
-1. **Initial screenshot review found raw dry-run failure text in Recent Activity on main dashboard.**
+## Issues found in this pass
+- No blocking visual issues found for checklist scope.
+- Minor note: setup-not-ready screenshots naturally show warning copy and unavailable switch readiness; this is expected behavior.
 
-## Fixes applied
-1. Added friendly activity mapping for dry-run ledger events (`SWITCH_DRY_RUN_STARTED`, `SWITCH_DRY_RUN_COMPLETED`, `SWITCH_DRY_RUN_FAILED`) so Recent Activity no longer surfaces raw backend strings on main UI.
-2. Re-ran screenshot capture and manually re-reviewed images.
+## Validation steps executed
+1. Ran `npm run screenshot` to generate artifacts.
+2. Opened and reviewed:
+   - `docs/screenshots/main-dashboard.png`
+   - `docs/screenshots/add-account-modal.png`
+   - `docs/screenshots/switch-account-modal.png`
+   - `docs/screenshots/advanced-settings.png`
+3. Cross-checked visuals against `docs/UI_ACCEPTANCE_CHECKLIST.md`.
 
 ## Final verdict
-- Visual checklist status: **PASS** for Phase 13 screenshot criteria.
-- Release status: **Do not mark V1 complete** solely from this pass; continue local host validation gates.
+- Visual checklist status: **PASS** for required screenshot validation artifacts.
+- UI claim status: **Do not claim UI done without screenshots** is satisfied for this pass because artifacts were regenerated and reviewed.
