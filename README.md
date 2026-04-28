@@ -102,15 +102,14 @@ Common commands:
 npx tsx cli.ts status
 npx tsx cli.ts doctor
 npx tsx cli.ts profiles list
-npx tsx cli.ts switch dry-run <profileId-or-alias>
-npx tsx cli.ts switch run <profileId-or-alias> --confirm
+npx tsx cli.ts switch run <profile> --confirm
 ```
 
 Windows fallback:
 
 ```powershell
-npx.cmd tsx cli.ts switch run <profileId-or-alias> --confirm
-node .\node_modules\tsx\dist\cli.mjs cli.ts switch run <profileId-or-alias> --confirm
+npx.cmd tsx cli.ts switch run <profile> --confirm
+node .\node_modules\tsx\dist\cli.mjs cli.ts switch run <profile> --confirm
 ```
 
 ## 14. Safety model

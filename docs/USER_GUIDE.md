@@ -83,6 +83,5 @@ Note: screenshot binaries are generated artifacts and may not be committed in gi
 ## 11) CLI quick help
 
 - `carousel profiles list`
-- `carousel switch dry-run <profileId-or-alias>`
-- `carousel switch run <profileId-or-alias> --confirm`
+- `carousel switch run <profile> --confirm`
 - `carousel doctor`

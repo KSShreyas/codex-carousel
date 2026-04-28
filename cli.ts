@@ -31,13 +31,27 @@ async function call(path: string, init?: RequestInit) {
   return data;
 }
 
-async function resolveProfileId(profileOrAlias: string) {
+async function resolveProfileId(profileIdOrAlias: string) {
+  const needle = profileIdOrAlias.trim();
   const rows = await call('/profiles');
-  const match = rows.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
-  if (!match) {
-    throw new Error(`Profile not found for: ${profileOrAlias}`);
+
+  const byId = rows.find((p: any) => p.id === needle);
+  if (byId) return byId.id as string;
+
+  const aliasExact = rows.filter((p: any) => p.alias === needle);
+  if (aliasExact.length === 1) return aliasExact[0].id as string;
+  if (aliasExact.length > 1) {
+    throw new Error(`Alias is ambiguous: ${needle}. Use the profile ID instead.`);
   }
-  return match.id as string;
+
+  const lower = needle.toLowerCase();
+  const aliasCaseInsensitive = rows.filter((p: any) => typeof p.alias === 'string' && p.alias.toLowerCase() === lower);
+  if (aliasCaseInsensitive.length === 1) return aliasCaseInsensitive[0].id as string;
+  if (aliasCaseInsensitive.length > 1) {
+    throw new Error(`Alias is ambiguous: ${needle}. Use the profile ID instead.`);
+  }
+
+  throw new Error(`Profile not found for: ${profileIdOrAlias}`);
 }
 
 async function executeSwitchRun(profileOrAlias: string, options: { fixtureRootDir?: string }) {

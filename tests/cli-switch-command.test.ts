@@ -9,6 +9,7 @@ const profiles: Profile[] = [{ id: 'profile_1', alias: 'Shreyas Pro' }];
 const switchCalls: Array<{ targetId: string; confirm: boolean }> = [];
 const dryRunCalls: string[] = [];
 const statusCalls: number[] = [];
+const clearLockCalls: number[] = [];
 let server: http.Server;
 let apiBase: string;
 
@@ -63,6 +64,13 @@ describe('CLI switch command', () => {
         return;
       }
 
+      if (req.method === 'POST' && url === '/api/switch/lock/clear') {
+        clearLockCalls.push(Date.now());
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ cleared: true }));
+        return;
+      }
+
       res.statusCode = 404;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: 'not found' }));
@@ -96,6 +104,12 @@ describe('CLI switch command', () => {
     expect(switchCalls.at(-1)).toEqual({ targetId: 'profile_1', confirm: true });
   });
 
+  it('switch run resolves by profile id too', async () => {
+    const result = await runCli(['switch', 'run', 'profile_1', '--confirm']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Switch success. Active profile: profile_1');
+  });
+
   it('dry-run still works with alias', async () => {
     const result = await runCli(['switch', 'dry-run', 'Shreyas Pro']);
     expect(result.code).toBe(0);
@@ -108,5 +122,12 @@ describe('CLI switch command', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('=== SWITCH STATUS ===');
     expect(statusCalls.length).toBeGreaterThan(0);
+  });
+
+  it('clear-lock works with --confirm', async () => {
+    const result = await runCli(['switch', 'clear-lock', '--confirm']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Switch lock cleared.');
+    expect(clearLockCalls.length).toBeGreaterThan(0);
   });
 });
