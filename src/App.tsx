@@ -68,14 +68,15 @@ type UsageSnapshot = {
 };
 
 type SafetyResult = {
-  completed: boolean;
-  pass: boolean;
-  backupState: 'Ready' | 'Unknown' | 'Failed';
-  targetSnapshot: 'Ready' | 'Missing' | 'Failed';
-  codexClosedState: 'Required' | 'Ready' | 'Unknown';
-  setupState: 'Complete' | 'Required';
-  overall: 'Safe to switch' | 'Fix setup first';
-  warningText: string;
+  ok: boolean;
+  targetProfileId: string;
+  checks: Array<{
+    label: 'Current account backup' | 'Target account saved login' | 'Codex status' | 'Setup' | 'Result';
+    status: 'Ready' | 'Warning' | 'Failed' | 'Unknown';
+    detail: string;
+  }>;
+  canSwitch: boolean;
+  warnings: string[];
 };
 
 type DiscoveryCandidate = {
@@ -130,6 +131,9 @@ function toFriendlyActivity(evt: LedgerEvent): string {
     PROFILE_UPDATED: 'Updated account details.',
     USAGE_SNAPSHOT_UPDATED: 'Updated usage status.',
     SWITCH_STARTED: 'Started account switch.',
+    SWITCH_DRY_RUN_STARTED: 'Started Safety Check.',
+    SWITCH_DRY_RUN_COMPLETED: 'Safety Check completed.',
+    SWITCH_DRY_RUN_FAILED: 'Safety Check found an issue.',
     SWITCH_COMPLETED: 'Switched account successfully.',
     SWITCH_FAILED: 'Account switch failed.',
     PROFILE_CAPTURE_COMPLETED: 'Saved current Codex login as an account.',
@@ -137,27 +141,6 @@ function toFriendlyActivity(evt: LedgerEvent): string {
     CODEX_LAUNCHED: 'Opened Codex.',
   };
   return map[evt.eventType] ?? evt.message;
-}
-
-function summarizeSafetyResult(data: any, setupReady: boolean): SafetyResult {
-  const warnings = (data?.warnings as string[] | undefined) ?? [];
-  const warningText = warnings.length ? warnings.map(translateBackendError).join(' ') : 'No blocking issues detected.';
-  const failed = !Boolean(data?.dryRun);
-  const backupState: SafetyResult['backupState'] = failed ? 'Failed' : ((data?.backupPlan?.length ?? 0) > 0 ? 'Ready' : 'Unknown');
-  const targetSnapshot: SafetyResult['targetSnapshot'] = failed ? 'Failed' : ((data?.restorePlan?.length ?? 0) > 0 ? 'Ready' : 'Missing');
-  const codexClosedState: SafetyResult['codexClosedState'] = warnings.some((w) => /closed/i.test(w)) ? 'Required' : 'Ready';
-  const setupState: SafetyResult['setupState'] = setupReady ? 'Complete' : 'Required';
-  const pass = Boolean(data?.dryRun) && setupReady;
-  return {
-    completed: true,
-    pass,
-    backupState,
-    targetSnapshot,
-    codexClosedState,
-    setupState,
-    overall: pass ? 'Safe to switch' : 'Fix setup first',
-    warningText,
-  };
 }
 
 export default function App() {
@@ -352,23 +335,23 @@ export default function App() {
   const runSafetyCheck = async (profileId: string) => {
     setSwitchBusy(true);
     try {
-      const res = await fetch(`/api/profiles/${profileId}/switch/dry-run`, {
+      const res = await fetch(`/api/profiles/${profileId}/safety-check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
+      const data = await res.json() as SafetyResult;
       if (!res.ok) {
-        setSafetyResult(summarizeSafetyResult({ dryRun: false, warnings: [data?.error ?? 'Safety check failed'] }, setupReady));
+        setFriendlyError('Could not run Safety Check right now. Please try again.');
         return;
       }
-      setSafetyResult(summarizeSafetyResult(data, setupReady));
+      setSafetyResult(data);
     } finally {
       setSwitchBusy(false);
     }
   };
 
-  const canSwitchAccount = Boolean(selectedAccount && safetyResult?.completed && safetyResult.pass && switchConfirm);
+  const canSwitchAccount = Boolean(selectedAccount && safetyResult?.canSwitch && switchConfirm);
 
   const switchAccountNow = async () => {
     if (!selectedAccount) return;
@@ -388,6 +371,11 @@ export default function App() {
     setSafetyResult(null);
     await load();
   };
+
+  useEffect(() => {
+    if (!switchModalOpen || !selectedAccount) return;
+    void runSafetyCheck(selectedAccount.id);
+  }, [switchModalOpen, selectedAccount?.id]);
 
   const openUsageModal = async (profileId: string) => {
     setUsageForm((s) => ({ ...s, profileId }));
@@ -598,19 +586,9 @@ export default function App() {
                                   setSwitchModalOpen(true);
                                 }}
                               >
-                                Switch Account
+                                Switch
                               </button>
                               <button className="rounded border border-cyan-500/70 px-2 py-1 text-xs text-cyan-200" onClick={() => openUsageModal(p.id)}>Update Usage</button>
-                              <button
-                                className="rounded border border-zinc-600 px-2 py-1 text-xs text-zinc-200"
-                                onClick={() => {
-                                  setSelectedAccount(p);
-                                  setSwitchModalOpen(true);
-                                  runSafetyCheck(p.id);
-                                }}
-                              >
-                                Safety Check
-                              </button>
                             </div>
                           </td>
                         </tr>
@@ -753,19 +731,23 @@ export default function App() {
           <div className="mx-auto mt-16 max-w-xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5">
             <h3 className="text-lg font-semibold text-zinc-100">Switch Account</h3>
             <p className="mt-1 text-sm text-zinc-300">Target account: <span className="font-medium text-zinc-100">{selectedAccount.alias}</span></p>
+            <p className="mt-2 text-sm text-zinc-300">Codex Carousel will back up the current account and switch to <span className="font-medium text-zinc-100">{selectedAccount.alias}</span>. Close Codex before continuing.</p>
 
             <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 text-sm">
-              <div>Current account backup: <span className="text-zinc-200">{safetyResult?.backupState ?? 'Unknown'}</span></div>
-              <div>Target account snapshot: <span className="text-zinc-200">{safetyResult?.targetSnapshot ?? 'Unknown'}</span></div>
-              <div>Codex closed: <span className="text-zinc-200">{safetyResult?.codexClosedState ?? 'Unknown'}</span></div>
-              <div>Setup: <span className="text-zinc-200">{safetyResult?.setupState ?? (setupReady ? 'Complete' : 'Required')}</span></div>
-              <div className="mt-1 font-medium text-cyan-200">Overall: {safetyResult?.overall ?? 'Run Safety Check first'}</div>
-              {safetyResult?.warningText && <div className="mt-1 text-xs text-zinc-400">{safetyResult.warningText}</div>}
+              {(safetyResult?.checks ?? []).map((check) => (
+                <div key={check.label} className="mt-1 first:mt-0">
+                  {check.label}: <span className="text-zinc-200">{check.label === 'Codex status' && check.status === 'Ready' ? 'Closed' : check.label === 'Setup' && check.status === 'Ready' ? 'Complete' : check.label === 'Setup' && check.status === 'Warning' ? 'Required' : check.label === 'Result' && check.status === 'Ready' ? 'Safe to switch' : check.label === 'Result' ? 'Fix setup first' : check.status}</span>
+                </div>
+              ))}
+              {(!safetyResult || safetyResult.checks.length === 0) && <div>Run Safety Check to verify switching safety.</div>}
+              {safetyResult?.warnings?.map((warning, idx) => (
+                <div key={`${warning}-${idx}`} className="mt-1 text-xs text-zinc-400">{warning}</div>
+              ))}
             </div>
 
             <label className="mt-3 flex items-center gap-2 text-sm text-zinc-300">
               <input type="checkbox" checked={switchConfirm} onChange={(e) => setSwitchConfirm(e.target.checked)} />
-              I confirm I want to switch accounts.
+              I understand Codex should be closed before switching.
             </label>
 
             <div className="mt-4 flex flex-wrap justify-end gap-2">
