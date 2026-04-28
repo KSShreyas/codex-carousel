@@ -13,7 +13,7 @@ This guide is written for normal daily use.
 1. Click **Set Up Codex**.
 2. Click **Scan for Codex**.
 3. Confirm the **Codex data folder**.
-4. Confirm the **Codex app path/launch command**.
+4. Confirm the **Open Codex command**.
 5. Click **Save Setup**.
 
 If setup is incomplete, account switching stays blocked for safety.
@@ -44,7 +44,7 @@ If Codex is open, close it first and re-run Safety Check.
 
 Click **Open Codex** in the top bar.
 
-If it does nothing, check your app path in **Advanced Settings**.
+If it does nothing, check your Open Codex command in **Advanced Settings**.
 
 ## 7) Update usage manually
 
@@ -64,7 +64,7 @@ Recommendations never switch for you.
 
 Use **Advanced Settings** for:
 - Codex data folder
-- Codex app path
+- Open Codex command
 - switch safety toggles
 - Diagnostics status and issues
 - event log

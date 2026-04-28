@@ -351,6 +351,16 @@ async function startServer() {
     }
   });
 
+  app.post('/api/codex/launch-test', async (req, res) => {
+    try {
+      const commandOverride = req.body?.commandOverride ? String(req.body.commandOverride) : null;
+      const result = await switchEngine.launchCodex(commandOverride);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
   app.get('/api/codex/discover', async (_req, res) => {
     const discovery = await codexDiscovery.discover(store.getSettings());
     res.json(discovery);

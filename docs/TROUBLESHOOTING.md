@@ -5,7 +5,7 @@ If the app shows **Setup Required**, setup is incomplete.
 
 What to do:
 1. Click **Set Up Codex**.
-2. Confirm data folder and app path.
+2. Confirm data folder and Open Codex command.
 3. Save setup.
 
 ## Codex data folder not found
@@ -15,11 +15,11 @@ If setup cannot find your data folder:
 - save and retry
 
 ## Open Codex button does nothing
-Usually the app path/launch command is missing or invalid.
+Usually the Open Codex command is missing or invalid.
 
 Fix:
 - open **Advanced Settings**
-- update the Codex app path/launch command
+- update the Open Codex command
 - save settings
 
 ## Switch blocked because Codex is open

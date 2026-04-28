@@ -9,7 +9,7 @@ export function translateBackendError(input: string): string {
     return 'Codex setup incomplete. Run setup before adding or switching accounts.';
   }
   if (/codexLaunchCommand is not configured/i.test(value)) {
-    return 'Codex app path is not configured. Set it in Advanced Settings.';
+    return 'Open Codex command is not configured. Set it in Advanced Settings.';
   }
   if (/explicit confirmation is required/i.test(value)) {
     return 'Please confirm before switching accounts.';
