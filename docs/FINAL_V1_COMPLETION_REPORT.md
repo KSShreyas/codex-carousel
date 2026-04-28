@@ -1,33 +1,36 @@
-# Final V1 Completion Report (Updated)
+# Final V1 Completion Report
 
-Date: 2026-04-27
+Date: 2026-04-28
 
-## Phase 7 status
-- Restored production-quality operator-console UI.
-- Fixed CLI real-switch command path using explicit `switch run` subcommand.
-- Fixed safe-by-default startup state behavior.
-- Added regression tests for UI structure, switch safety gating, CLI command behavior, and seeded state safety.
+## Current status
+V1 is **not yet declared complete**.
 
-## Honest completion criteria
-V1 cannot be called complete unless all are true:
-- UI is visually acceptable and no raw checklist dump remains.
-- CLI real-switch works with documented command.
-- `localSwitchingEnabled` defaults to false in shipped/default state behavior.
-- Backend/API safety confirmation still enforced.
-- Fixture switch path still works.
-- No sensitive content leaks.
-- Restart persistence still works.
+## What is already in place
+- User-facing dashboard with Add Account, Switch Account, Safety Check, and Open Codex flows.
+- Explicit CLI real-switch command:
+  - `switch run <profileId-or-alias> --confirm`
+- Safe startup defaults and fixture/cloud E2E validation coverage.
+- Visual QA workflow and screenshot automation.
 
-## Current standing
-- Code and automated tests now cover the major blockers.
-- Real profile switching still needs local host validation before claiming full production confidence.
-- Identity verification may still be unavailable (`VerifyUnavailable`) depending on environment.
+## Latest checks
+- Typecheck: pass
+- Lint: pass
+- Test suite: pass
+- Build: pass
+- Fixture/cloud E2E + UI checks: pass
 
-## Commands
-- `npm run typecheck`
-- `npm run lint`
-- `npm test`
-- `npm run build`
-- `npm run screenshot` (optional dependency path)
+## Remaining blockers before V1 completion
+1. **Real Windows local validation is still required.**
+   - Must validate on real local Codex data paths and real account transitions.
+2. **Identity verification may remain unavailable depending on environment.**
+   - Must be reviewed and accepted as an explicit limitation if no safe verification command exists.
+3. **Operational sign-off on local-machine rollback drills is still required.**
 
-See `docs/PHASE_7_UI_AND_BLOCKER_FIX_REPORT.md` for detailed changes.
+## Completion criteria (must all be true)
+- Real Windows validation checklist passes.
+- No sensitive data leaks in UI/API/CLI/logs.
+- Manual switch + rollback behavior verified locally.
+- Documentation and user flow remain aligned with shipped UX.
+
+## Conclusion
+Do **not** mark V1 complete until the remaining local Windows blockers are closed.
