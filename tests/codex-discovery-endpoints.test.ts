@@ -8,6 +8,11 @@ describe('codex discovery/setup endpoints are wired', () => {
     expect(server).toContain("app.get('/api/codex/discover'");
   });
 
+  it('includes launch test endpoint', () => {
+    expect(server).toContain("app.post('/api/codex/launch-test'");
+    expect(server).toContain('commandOverride');
+  });
+
   it('includes setup apply endpoint', () => {
     expect(server).toContain("app.post('/api/codex/setup/apply'");
     expect(server).toContain('enableSwitching: req.body?.enableSwitching === true');

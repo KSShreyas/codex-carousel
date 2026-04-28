@@ -17,6 +17,7 @@ describe('codex discovery service', () => {
       expect((candidate as any).contents).toBeUndefined();
       expect((candidate as any).raw).toBeUndefined();
     }
+    expect(result.dataFolderState).toBeDefined();
   });
 
   it('does not read raw file contents during discovery', async () => {

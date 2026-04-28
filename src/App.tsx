@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { adaptSettings, type FriendlySettings, toSettingsPatch } from './ui/settingsAdapter';
 import { translateBackendError } from './ui/errorTranslation';
+import { computeDirty, shouldSyncDraftFromSaved } from './ui/draftState';
+import { DEFAULT_CODEX_LAUNCH_COMMAND } from './carousel/launchCommand';
 
 type LimitStatus = 'Available' | 'Low' | 'Exhausted' | 'Unknown';
 type Source = 'Manual' | 'CodexBanner' | 'UsageDashboard' | 'Unknown';
@@ -93,6 +95,8 @@ type DiscoveryResult = {
   candidates: DiscoveryCandidate[];
   recommendedProfileRootPath: string | null;
   recommendedLaunchCommand: string | null;
+  codexFound: boolean;
+  dataFolderState: 'high' | 'needs_validation' | 'missing' | 'unknown';
   setupComplete: boolean;
   warnings: string[];
 };
@@ -150,7 +154,9 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
-  const [settings, setSettings] = useState<FriendlySettings | null>(null);
+  const [savedSettings, setSavedSettings] = useState<FriendlySettings | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<FriendlySettings | null>(null);
+  const [settingsTouched, setSettingsTouched] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [ledger, setLedger] = useState<LedgerEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -164,24 +170,28 @@ export default function App() {
   const [scanBusy, setScanBusy] = useState(false);
   const [applySetupBusy, setApplySetupBusy] = useState(false);
   const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
-  const [setupForm, setSetupForm] = useState({
+  const [setupSaved, setSetupSaved] = useState({
     dataFolder: '',
     launchCommand: '',
     enableSwitching: true,
   });
+  const [setupForm, setSetupForm] = useState(setupSaved);
+  const [setupTouched, setSetupTouched] = useState(false);
 
   const [selectedAccount, setSelectedAccount] = useState<Profile | null>(null);
   const [switchBusy, setSwitchBusy] = useState(false);
   const [switchConfirm, setSwitchConfirm] = useState(false);
   const [safetyResult, setSafetyResult] = useState<SafetyResult | null>(null);
 
-  const [captureForm, setCaptureForm] = useState({ alias: '', plan: 'Plus', notes: '' });
+  const [captureSaved] = useState({ alias: '', plan: 'Plus', notes: '' });
+  const [captureForm, setCaptureForm] = useState(captureSaved);
+  const [captureTouched, setCaptureTouched] = useState(false);
   const [addStep, setAddStep] = useState(0);
   const [loggedInStepDone, setLoggedInStepDone] = useState(false);
   const [accountSavedNotice, setAccountSavedNotice] = useState<string | null>(null);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
-  const [usageForm, setUsageForm] = useState({
+  const [usageSaved, setUsageSaved] = useState({
     profileId: '',
     fiveHourStatus: 'Unknown' as LimitStatus,
     weeklyStatus: 'Unknown' as LimitStatus,
@@ -190,6 +200,8 @@ export default function App() {
     notes: '',
     source: 'Manual' as Source,
   });
+  const [usageForm, setUsageForm] = useState(usageSaved);
+  const [usageTouched, setUsageTouched] = useState(false);
   const [usageHistory, setUsageHistory] = useState<UsageSnapshot[]>([]);
 
   const load = async () => {
@@ -211,7 +223,8 @@ export default function App() {
       setActiveProfileId(statusData.runtime?.activeProfileId ?? null);
       setHealth(healthData);
       setDiagnostics(diagnosticsData);
-      setSettings(adaptSettings(settingsData));
+      const nextSettings = adaptSettings(settingsData);
+      setSavedSettings(nextSettings);
       setLedger(ledgerData ?? []);
       setFriendlyError(null);
     } catch {
@@ -228,23 +241,36 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!usageForm.profileId && profiles.length > 0) {
+    if (!usageForm.profileId && profiles.length > 0 && !usageTouched) {
       setUsageForm((v) => ({ ...v, profileId: activeProfileId ?? profiles[0].id }));
     }
-  }, [profiles, activeProfileId, usageForm.profileId]);
+  }, [profiles, activeProfileId, usageForm.profileId, usageTouched]);
 
   useEffect(() => {
-    if (!settings) return;
-    setSetupForm((v) => ({
-      ...v,
-      dataFolder: settings.dataFolder,
-      launchCommand: settings.appPath,
-      enableSwitching: settings.switchingSetupReady || v.enableSwitching,
-    }));
-  }, [settings]);
+    if (!savedSettings) return;
+    const nextSetupSaved = {
+      dataFolder: savedSettings.dataFolder,
+      launchCommand: savedSettings.appPath,
+      enableSwitching: savedSettings.switchingSetupReady,
+    };
+    setSetupSaved(nextSetupSaved);
+    if (shouldSyncDraftFromSaved({ dirty: computeDirty(setupForm, nextSetupSaved), touched: setupTouched, isOpen: setupWizardOpen })) {
+      setSetupForm(nextSetupSaved);
+      setSetupTouched(false);
+    }
+    if (shouldSyncDraftFromSaved({ dirty: computeDirty(settingsDraft, savedSettings), touched: settingsTouched, isOpen: advancedOpen })) {
+      setSettingsDraft(savedSettings);
+      setSettingsTouched(false);
+    }
+  }, [savedSettings]);
 
   const active = useMemo(() => profiles.find((p) => p.id === activeProfileId) ?? null, [profiles, activeProfileId]);
-  const setupReady = Boolean(settings?.switchingSetupReady);
+  const setupReady = Boolean(
+    diagnostics?.setup?.codexFound
+    && diagnostics?.setup?.dataFolderConfigured
+    && diagnostics?.setup?.appPathConfigured
+    && diagnostics?.setup?.switchingSetupComplete,
+  );
   const savedCount = profiles.length;
 
   const openCodex = async () => {
@@ -265,10 +291,15 @@ export default function App() {
       const res = await fetch('/api/codex/discover');
       const data = await res.json() as DiscoveryResult;
       setDiscovery(data);
-      setSetupForm((v) => ({
+      setSetupSaved((v) => ({
         ...v,
         dataFolder: data.recommendedProfileRootPath ?? v.dataFolder,
         launchCommand: data.recommendedLaunchCommand ?? v.launchCommand,
+      }));
+      setSetupForm((v) => ({
+        ...v,
+        dataFolder: setupTouched ? v.dataFolder : (data.recommendedProfileRootPath ?? v.dataFolder),
+        launchCommand: setupTouched ? v.launchCommand : (data.recommendedLaunchCommand ?? v.launchCommand),
       }));
       setFriendlyError(null);
     } catch {
@@ -297,11 +328,27 @@ export default function App() {
       }
       setSetupWizardOpen(false);
       setAdvancedOpen(false);
+      setSetupTouched(false);
+      setSettingsTouched(false);
       setFriendlyError(null);
       await load();
     } finally {
       setApplySetupBusy(false);
     }
+  };
+
+  const testLaunch = async (command: string) => {
+    const res = await fetch('/api/codex/launch-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commandOverride: command }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setFriendlyError(translateBackendError(data?.error ?? 'Could not test launch command.'));
+      return;
+    }
+    setFriendlyError('Open Codex command test succeeded.');
   };
 
   const saveAccount = async () => {
@@ -327,6 +374,7 @@ export default function App() {
     }
 
     setCaptureForm({ alias: '', plan: 'Plus', notes: '' });
+    setCaptureTouched(false);
     setAddModalOpen(false);
     setAddStep(0);
     setLoggedInStepDone(false);
@@ -382,6 +430,7 @@ export default function App() {
 
   const openUsageModal = async (profileId: string) => {
     setUsageForm((s) => ({ ...s, profileId }));
+    setUsageTouched(false);
     const res = await fetch(`/api/profiles/${profileId}/usage-snapshots`);
     setUsageHistory(await res.json());
     setUsageModalOpen(true);
@@ -412,22 +461,26 @@ export default function App() {
 
     await fetch('/api/recommendations/recompute', { method: 'POST' });
     setUsageModalOpen(false);
+    setUsageTouched(false);
     await load();
   };
 
   const saveAdvanced = async () => {
-    if (!settings) return;
+    if (!settingsDraft) return;
     const res = await fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toSettingsPatch(settings)),
+      body: JSON.stringify(toSettingsPatch(settingsDraft)),
     });
     const data = await res.json();
     if (!res.ok) {
       setFriendlyError(translateBackendError(data?.error ?? 'Could not save settings.'));
       return;
     }
-    setSettings(adaptSettings(data));
+    const adapted = adaptSettings(data);
+    setSavedSettings(adapted);
+    setSettingsDraft(adapted);
+    setSettingsTouched(false);
     await load();
   };
 
@@ -611,9 +664,10 @@ export default function App() {
                 <button className="mt-2 rounded border border-cyan-500/70 px-3 py-1.5 text-cyan-200" onClick={scanForCodex} disabled={scanBusy}>{scanBusy ? 'Scanning…' : 'Scan for Codex'}</button>
                 {discovery && (
                   <div className="mt-2 space-y-1 text-xs text-zinc-300">
-                    <div>Codex app/package: {discovery.candidates.some((c) => c.kind === 'packageRoot' && c.exists) ? 'Found' : 'Not found'}</div>
+                    <div>Codex: {discovery.codexFound ? 'Codex found' : 'Setup required'}</div>
+                    <div>Data folder: {discovery.dataFolderState === 'high' ? 'Found, high confidence' : discovery.dataFolderState === 'needs_validation' ? 'Found, needs validation' : discovery.dataFolderState === 'missing' ? 'Missing' : 'Unknown'}</div>
                     <div>Recommended data folder: {discovery.recommendedProfileRootPath ?? 'Not found'}</div>
-                    <div>Recommended app path/command: {discovery.recommendedLaunchCommand ?? 'Not found'}</div>
+                    <div>Recommended Open Codex command: {discovery.recommendedLaunchCommand ?? DEFAULT_CODEX_LAUNCH_COMMAND}</div>
                     {discovery.warnings.length > 0 && <div className="text-amber-200">{discovery.warnings.join(' ')}</div>}
                   </div>
                 )}
@@ -622,25 +676,27 @@ export default function App() {
               <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
                 <div className="font-medium text-zinc-100">2. Confirm Data Folder</div>
                 <label className="mt-2 block text-zinc-300">Codex data folder
-                  <input className={inputClass} value={setupForm.dataFolder} onChange={(e) => setSetupForm((v) => ({ ...v, dataFolder: e.target.value }))} />
+                  <input className={inputClass} value={setupForm.dataFolder} onChange={(e) => { setSetupTouched(true); setSetupForm((v) => ({ ...v, dataFolder: e.target.value })); }} />
                 </label>
                 <p className="mt-1 text-xs text-zinc-500">This is where Codex stores local sign-in/session data. Carousel backs this up when saving accounts.</p>
               </section>
 
               <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
                 <div className="font-medium text-zinc-100">3. Confirm Launch Command</div>
-                <label className="mt-2 block text-zinc-300">Codex app path or launch command
-                  <input className={inputClass} value={setupForm.launchCommand} onChange={(e) => setSetupForm((v) => ({ ...v, launchCommand: e.target.value }))} />
+                <label className="mt-2 block text-zinc-300">Open Codex command
+                  <input className={inputClass} value={setupForm.launchCommand} onChange={(e) => { setSetupTouched(true); setSetupForm((v) => ({ ...v, launchCommand: e.target.value })); }} />
                 </label>
-                <p className="mt-1 text-xs text-zinc-500">Used only by Open Codex button.</p>
+                <p className="mt-1 text-xs text-zinc-500">Used only by Open Codex button. For Microsoft Store apps, the command is: {DEFAULT_CODEX_LAUNCH_COMMAND}</p>
+                <button className="mt-2 rounded border border-cyan-500/70 px-3 py-1.5 text-cyan-200" onClick={() => testLaunch(setupForm.launchCommand)}>Test Launch</button>
               </section>
 
               <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
                 <div className="font-medium text-zinc-100">4. Finish Setup</div>
                 <label className="mt-2 flex items-center gap-2 text-zinc-300">
-                  <input type="checkbox" checked={setupForm.enableSwitching} onChange={(e) => setSetupForm((v) => ({ ...v, enableSwitching: e.target.checked }))} />
+                  <input type="checkbox" checked={setupForm.enableSwitching} onChange={(e) => { setSetupTouched(true); setSetupForm((v) => ({ ...v, enableSwitching: e.target.checked })); }} />
                   Enable account switching after setup
                 </label>
+                <button className="mt-2 rounded border border-zinc-600 px-3 py-1.5 text-zinc-200" onClick={() => { setSetupForm(setupSaved); setSetupTouched(false); }}>Reset Changes</button>
               </section>
             </div>
             <div className="mt-4 flex justify-end gap-2">
@@ -690,10 +746,10 @@ export default function App() {
             {addStep === 2 && (
               <section className="mt-4 grid gap-3 md:grid-cols-2">
                 <label className="text-sm text-zinc-300">Account Name
-                  <input className={inputClass} value={captureForm.alias} onChange={(e) => setCaptureForm((v) => ({ ...v, alias: e.target.value }))} />
+                  <input className={inputClass} value={captureForm.alias} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, alias: e.target.value })); }} />
                 </label>
                 <label className="text-sm text-zinc-300">Plan
-                  <select className={inputClass} value={captureForm.plan} onChange={(e) => setCaptureForm((v) => ({ ...v, plan: e.target.value }))}>
+                  <select className={inputClass} value={captureForm.plan} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, plan: e.target.value })); }}>
                     <option value="Plus">Plus</option>
                     <option value="Pro100">Pro 100</option>
                     <option value="Pro200">Pro 200</option>
@@ -701,8 +757,9 @@ export default function App() {
                   </select>
                 </label>
                 <label className="md:col-span-2 text-sm text-zinc-300">Notes (optional)
-                  <input className={inputClass} value={captureForm.notes} onChange={(e) => setCaptureForm((v) => ({ ...v, notes: e.target.value }))} />
+                  <input className={inputClass} value={captureForm.notes} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, notes: e.target.value })); }} />
                 </label>
+                <button className="rounded border border-zinc-600 px-3 py-2 text-sm text-zinc-200 md:col-span-2" onClick={() => { setCaptureForm(captureSaved); setCaptureTouched(false); }}>Reset Changes</button>
                 <button className="rounded border border-cyan-500/70 px-3 py-2 text-sm text-cyan-200 md:col-span-2" onClick={() => setAddStep(3)} disabled={!captureForm.alias.trim() || !loggedInStepDone}>Continue to Save</button>
               </section>
             )}
@@ -763,35 +820,35 @@ export default function App() {
             <h3 className="text-lg font-semibold text-zinc-100">Update Usage</h3>
             <form onSubmit={submitUsage} className="mt-3 grid gap-3 text-sm">
               <label className="text-zinc-300">Profile
-                <select className={inputClass} value={usageForm.profileId} onChange={(e) => setUsageForm((v) => ({ ...v, profileId: e.target.value }))}>
+                <select className={inputClass} value={usageForm.profileId} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, profileId: e.target.value })); }}>
                   {profiles.map((p) => <option key={p.id} value={p.id}>{p.alias}</option>)}
                 </select>
               </label>
               <div className="grid gap-3 md:grid-cols-3">
                 <label className="text-zinc-300">5H window status
-                  <select className={inputClass} value={usageForm.fiveHourStatus} onChange={(e) => setUsageForm((v) => ({ ...v, fiveHourStatus: e.target.value as LimitStatus }))}>
+                  <select className={inputClass} value={usageForm.fiveHourStatus} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, fiveHourStatus: e.target.value as LimitStatus })); }}>
                     <option>Available</option><option>Low</option><option>Exhausted</option><option>Unknown</option>
                   </select>
                 </label>
                 <label className="text-zinc-300">weekly/plan status
-                  <select className={inputClass} value={usageForm.weeklyStatus} onChange={(e) => setUsageForm((v) => ({ ...v, weeklyStatus: e.target.value as LimitStatus }))}>
+                  <select className={inputClass} value={usageForm.weeklyStatus} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, weeklyStatus: e.target.value as LimitStatus })); }}>
                     <option>Available</option><option>Low</option><option>Exhausted</option><option>Unknown</option>
                   </select>
                 </label>
                 <label className="text-zinc-300">credits status
-                  <select className={inputClass} value={usageForm.creditsStatus} onChange={(e) => setUsageForm((v) => ({ ...v, creditsStatus: e.target.value as LimitStatus }))}>
+                  <select className={inputClass} value={usageForm.creditsStatus} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, creditsStatus: e.target.value as LimitStatus })); }}>
                     <option>Available</option><option>Low</option><option>Exhausted</option><option>Unknown</option>
                   </select>
                 </label>
               </div>
               <label className="text-zinc-300">reset time
-                <input className={inputClass} value={usageForm.observedResetAt} onChange={(e) => setUsageForm((v) => ({ ...v, observedResetAt: e.target.value }))} placeholder="2026-04-27T00:00:00.000Z" />
+                <input className={inputClass} value={usageForm.observedResetAt} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, observedResetAt: e.target.value })); }} placeholder="2026-04-27T00:00:00.000Z" />
               </label>
               <label className="text-zinc-300">note
-                <input className={inputClass} value={usageForm.notes} onChange={(e) => setUsageForm((v) => ({ ...v, notes: e.target.value }))} />
+                <input className={inputClass} value={usageForm.notes} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, notes: e.target.value })); }} />
               </label>
               <label className="text-zinc-300">source
-                <select className={inputClass} value={usageForm.source} onChange={(e) => setUsageForm((v) => ({ ...v, source: e.target.value as Source }))}>
+                <select className={inputClass} value={usageForm.source} onChange={(e) => { setUsageTouched(true); setUsageForm((v) => ({ ...v, source: e.target.value as Source })); }}>
                   <option>Manual</option><option>CodexBanner</option><option>UsageDashboard</option><option>Unknown</option>
                 </select>
               </label>
@@ -799,6 +856,7 @@ export default function App() {
                 Latest saved snapshots: {usageHistory.length}
               </div>
               <div className="flex justify-end gap-2">
+                <button type="button" className="rounded-lg border border-zinc-600 px-3 py-2" onClick={() => { setUsageForm(usageSaved); setUsageTouched(false); }}>Reset Changes</button>
                 <button type="button" className="rounded-lg border border-zinc-600 px-3 py-2" onClick={() => setUsageModalOpen(false)}>Cancel</button>
                 <button className="rounded-lg border border-cyan-500/70 px-3 py-2 text-cyan-200">Save Usage Update</button>
               </div>
@@ -807,7 +865,7 @@ export default function App() {
         </div>
       )}
 
-      {advancedOpen && settings && (
+      {advancedOpen && settingsDraft && (
         <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-zinc-100">Advanced Settings</h3>
@@ -816,29 +874,32 @@ export default function App() {
           <div className="mt-3 space-y-3 text-sm">
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
               <div className="font-medium text-zinc-100">Switching setup</div>
-              <div className="mt-1 text-zinc-300">{settings.switchingSetupReady ? 'Setup Complete' : 'Setup Required'}</div>
+              <div className="mt-1 text-zinc-300">{setupReady ? 'Setup Complete' : 'Setup Required'}</div>
             </div>
 
             <label className="block text-zinc-300">Codex data folder
-              <input className={inputClass} value={settings.dataFolder} onChange={(e) => setSettings((s) => s ? { ...s, dataFolder: e.target.value } : s)} />
+              <input className={inputClass} value={settingsDraft.dataFolder} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, dataFolder: e.target.value } : s); }} />
             </label>
-            <label className="block text-zinc-300">Codex app path
-              <input className={inputClass} value={settings.appPath} onChange={(e) => setSettings((s) => s ? { ...s, appPath: e.target.value } : s)} />
+            <label className="block text-zinc-300">Open Codex command
+              <input className={inputClass} value={settingsDraft.appPath} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, appPath: e.target.value } : s); }} />
             </label>
+            <p className="text-xs text-zinc-500">For Microsoft Store apps, the command is: {DEFAULT_CODEX_LAUNCH_COMMAND}</p>
+            <button className="w-full rounded-lg border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => testLaunch(settingsDraft.appPath)}>Test Launch</button>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settings.requireClosedBeforeSwitch} onChange={(e) => setSettings((s) => s ? { ...s, requireClosedBeforeSwitch: e.target.checked } : s)} />
+              <input type="checkbox" checked={settingsDraft.requireClosedBeforeSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, requireClosedBeforeSwitch: e.target.checked } : s); }} />
               Require Codex closed before switch
             </label>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settings.openAfterSwitch} onChange={(e) => setSettings((s) => s ? { ...s, openAfterSwitch: e.target.checked } : s)} />
+              <input type="checkbox" checked={settingsDraft.openAfterSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, openAfterSwitch: e.target.checked } : s); }} />
               Auto launch after switch
             </label>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settings.switchingSetupReady} onChange={(e) => setSettings((s) => s ? { ...s, switchingSetupReady: e.target.checked } : s)} />
+              <input type="checkbox" checked={settingsDraft.switchingSetupReady} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, switchingSetupReady: e.target.checked } : s); }} />
               Account switching setup
             </label>
 
             <button className="w-full rounded-lg border border-emerald-500/70 bg-emerald-900/20 px-3 py-2 text-emerald-200" onClick={saveAdvanced}>Save Advanced Settings</button>
+            <button className="w-full rounded-lg border border-zinc-600 px-3 py-2 text-zinc-200" onClick={() => { setSettingsDraft(savedSettings); setSettingsTouched(false); }}>Reset Changes</button>
 
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
               <div className="font-medium text-zinc-100">Diagnostics</div>
@@ -847,7 +908,7 @@ export default function App() {
                 <div className="mt-2 space-y-1 text-xs text-zinc-400">
                   <div>Codex found: {diagnostics.setup.codexFound ? 'Yes' : 'No'}</div>
                   <div>Codex data folder configured: {diagnostics.setup.dataFolderConfigured ? 'Yes' : 'No'}</div>
-                  <div>Codex app path configured: {diagnostics.setup.appPathConfigured ? 'Yes' : 'No'}</div>
+                  <div>Open Codex command configured: {diagnostics.setup.appPathConfigured ? 'Yes' : 'No'}</div>
                   <div>Account switching setup complete: {diagnostics.setup.switchingSetupComplete ? 'Yes' : 'No'}</div>
                 </div>
               )}

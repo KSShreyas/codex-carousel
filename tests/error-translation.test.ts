@@ -11,7 +11,7 @@ describe('backend error translation helper', () => {
   });
 
   it('maps missing launch path error to friendly copy', () => {
-    expect(translateBackendError('codexLaunchCommand is not configured')).toBe('Codex app path is not configured. Set it in Advanced Settings.');
+    expect(translateBackendError('codexLaunchCommand is not configured')).toBe('Open Codex command is not configured. Set it in Advanced Settings.');
   });
 
   it('maps explicit confirmation error', () => {

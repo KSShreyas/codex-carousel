@@ -36,7 +36,7 @@ If you see **Setup Required**:
 1. Click **Set Up Codex**.
 2. Scan for Codex.
 3. Confirm your Codex data folder.
-4. Confirm your Codex app path/launch command.
+4. Confirm your Open Codex command (Microsoft Store default is prefilled).
 5. Save setup.
 
 When setup is complete, switching can be enabled safely.
@@ -89,7 +89,7 @@ Use **Advanced Settings** for technical setup and system checks.
 
 You can review:
 - Codex data folder
-- Codex app path
+- Open Codex command
 - switching safety toggles
 - Diagnostics status/issues
 - event log

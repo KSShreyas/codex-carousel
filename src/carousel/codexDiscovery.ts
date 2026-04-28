@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeLaunchCommand } from './launchCommand';
 
 export type DiscoveryCandidate = {
   kind: 'profileRoot' | 'packageRoot' | 'launchCommand';
@@ -16,6 +17,8 @@ export type CodexDiscoveryResult = {
   candidates: DiscoveryCandidate[];
   recommendedProfileRootPath: string | null;
   recommendedLaunchCommand: string | null;
+  codexFound: boolean;
+  dataFolderState: 'high' | 'needs_validation' | 'missing' | 'unknown';
   setupComplete: boolean;
   warnings: string[];
 };
@@ -64,7 +67,7 @@ export class CodexDiscoveryService {
     return {
       packageRoot,
       profileRoots: base,
-      storeSubdirs: ['LocalState', 'RoamingState', 'LocalCache', 'TempState'],
+      storeSubdirs: ['LocalState', 'RoamingState', 'LocalCache'],
     };
   }
 
@@ -126,22 +129,24 @@ export class CodexDiscoveryService {
       });
     }
 
+    const codexPackageDetected = candidates.some((c) => c.kind === 'packageRoot' && c.exists && c.pathOrCommand.toLowerCase().includes('openai.codex_2p2nqsd0c76g0'));
+
     if (settings.codexLaunchCommand) {
       candidates.push({
         kind: 'launchCommand',
-        pathOrCommand: settings.codexLaunchCommand,
+        pathOrCommand: normalizeLaunchCommand(settings.codexLaunchCommand) ?? settings.codexLaunchCommand,
         exists: true,
         confidence: 'high',
         reason: 'Using configured launch command.',
         safeForLogs: true,
       });
-    } else if (packageExists && this.platform === 'win32') {
+    } else if (codexPackageDetected && this.platform === 'win32') {
       candidates.push({
         kind: 'launchCommand',
-        pathOrCommand: 'start shell:AppsFolder\\OpenAI.Codex',
+        pathOrCommand: DEFAULT_CODEX_LAUNCH_COMMAND,
         exists: true,
-        confidence: 'medium',
-        reason: 'Windows Store package detected; shell launch command may work.',
+        confidence: 'high',
+        reason: 'Codex Microsoft Store AppID detected; prefilled launch command.',
         safeForLogs: true,
       });
     } else {
@@ -153,12 +158,16 @@ export class CodexDiscoveryService {
         reason: 'Launch command not detected. Manual setup needed.',
         safeForLogs: true,
       });
-      warnings.push('Codex app path is not configured. Set it in setup to enable Open Codex.');
+      warnings.push('Open Codex command is not configured. Set it in setup to enable Open Codex.');
     }
 
     const recommendedProfileRootPath = candidates.find((c) => c.kind === 'profileRoot' && c.exists && (c.confidence === 'high' || c.confidence === 'medium'))?.pathOrCommand ?? null;
     const recommendedLaunchCommand = candidates.find((c) => c.kind === 'launchCommand' && c.exists)?.pathOrCommand || null;
-    const setupComplete = Boolean(settings.localSwitchingEnabled && recommendedProfileRootPath);
+    const codexFound = candidates.some((c) => c.kind === 'packageRoot' && c.exists && c.pathOrCommand.toLowerCase().includes('openai.codex_'));
+    const dataFolderState: CodexDiscoveryResult['dataFolderState'] = recommendedProfileRootPath
+      ? (recommendedProfileRootPath.toLowerCase().includes('localstate') ? 'high' : 'needs_validation')
+      : (codexFound ? 'missing' : 'unknown');
+    const setupComplete = Boolean(settings.localSwitchingEnabled && recommendedProfileRootPath && recommendedLaunchCommand && codexFound);
 
     if (!recommendedProfileRootPath) {
       warnings.push('Codex data folder was not found automatically. Choose it manually in setup.');
@@ -169,6 +178,8 @@ export class CodexDiscoveryService {
       candidates,
       recommendedProfileRootPath,
       recommendedLaunchCommand,
+      codexFound,
+      dataFolderState,
       setupComplete,
       warnings,
     };
