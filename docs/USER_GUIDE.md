@@ -41,12 +41,19 @@ Use **Update Usage** for a saved account and fill:
 Then save and recommendations will recompute.
 
 ## 5) Switch account safely
-1. Click **Switch Account** on a saved account.
-2. Run **Safety Check**.
-3. Confirm the checkbox.
-4. Click **Switch Account**.
+1. Click **Switch** on a saved account.
+2. In the modal, wait for **Safety Check** to complete (or click **Safety Check** if prompted).
+3. Review friendly Safety Check rows:
+   - Current account backup
+   - Target account saved login
+   - Codex status
+   - Setup
+   - Result
+4. Confirm the checkbox: **I understand Codex should be closed before switching.**
+5. Click **Switch Account**.
 
 The final switch button is disabled until safety check + confirmation are complete.
+If Codex is open, the modal shows: **Codex appears to be open. Close it before switching.**
 
 ## 6) Open Codex
 Use **Open Codex** to launch Codex using your configured app path/command.
@@ -64,3 +71,14 @@ Main dashboard stays user-facing and does not expose raw backend field names.
 
 ## 8) Real-world validation requirement
 Even after tests pass, real profile switching must be validated locally on the target machine.
+
+## 9) CLI switch commands
+Use explicit subcommands:
+- `carousel switch run <profileId-or-alias> --confirm`
+- `carousel switch dry-run <profileId-or-alias>`
+- `carousel switch status`
+- `carousel switch clear-lock --confirm`
+
+Windows fallback:
+- `npx.cmd tsx cli.ts switch run <profileId-or-alias> --confirm`
+- `node .\\node_modules\\tsx\\dist\\cli.mjs cli.ts switch run <profileId-or-alias> --confirm`

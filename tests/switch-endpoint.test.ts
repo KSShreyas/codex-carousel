@@ -9,13 +9,14 @@ describe('switch API/CLI/UI wiring', () => {
   it('implements capture-current and real switch APIs', () => {
     expect(server).toContain('/api/profiles/capture-current');
     expect(server).toContain("app.post('/api/profiles/:id/switch'");
+    expect(server).toContain("app.post('/api/profiles/:id/safety-check'");
     expect(server).toContain('executeSwitch');
   });
 
   it('requires confirmation for real switch pathways', () => {
     expect(server).toContain('confirm = req.body?.confirm === true');
     expect(cli).toContain("requiredOption('--confirm'");
-    expect(app).toContain('I confirm I want to switch accounts.');
+    expect(app).toContain('I understand Codex should be closed before switching.');
   });
 
   it('includes launch API and CLI command', () => {

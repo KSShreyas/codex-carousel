@@ -5,7 +5,7 @@ Codex Carousel is a local-first account switcher for managing multiple **legitim
 ## Core guarantees
 
 - Durable backend store is the source of truth.
-- Safety gates remain enforced: dry-run + explicit confirmation + local switching toggle.
+- Safety gates remain enforced: Safety Check (powered by dry-run) + explicit confirmation + local switching toggle.
 - No auto-switching, no provider routing, no API-key flows.
 - No fake usage values or fake identity verification.
 - Raw auth/session contents are not exposed in API/UI/CLI logs.
@@ -16,7 +16,7 @@ The dashboard is now a simplified product UI:
 - friendly header with backend/setup status
 - setup banner + **Set Up Codex** wizard
 - current account + saved accounts + recommendation + recent activity
-- add-account, safety-check, switch-account, and update-usage modals
+- add-account, Safety Check + switch-account, and update-usage modals
 - technical diagnostics/settings hidden in Advanced Settings
 - add-account wizard flow: **Open Codex Login → I Logged In → Save This Account**
 
@@ -41,21 +41,15 @@ Backend/UI default: `http://127.0.0.1:3000`.
 ```bash
 npx tsx cli.ts status
 npx tsx cli.ts doctor
-npx tsx cli.ts switch dry-run <profileId>
+npx tsx cli.ts switch dry-run <profileId-or-alias>
 npx tsx cli.ts switch run <profileId-or-alias> --confirm
-```
-
-Compatibility path (also supported):
-
-```bash
-npx tsx cli.ts switch <profileId-or-alias> --confirm
 ```
 
 Windows fallback:
 
 ```powershell
-npx.cmd tsx cli.ts switch <profileId-or-alias> --confirm
-node .\node_modules\tsx\dist\cli.mjs cli.ts switch <profileId-or-alias> --confirm
+npx.cmd tsx cli.ts switch run <profileId-or-alias> --confirm
+node .\node_modules\tsx\dist\cli.mjs cli.ts switch run <profileId-or-alias> --confirm
 ```
 
 ## V1 completion honesty
@@ -76,9 +70,14 @@ npm run lint
 npm test
 npm run build
 npm run screenshot
+npm run e2e:ui
 ```
 
-If `npm run screenshot` fails, it should fail with an explicit dependency reason (Playwright/browser deps).
+Install browser dependencies first when needed:
+
+```bash
+npx playwright install --with-deps chromium
+```
 
 ## Codex setup wizard
 
@@ -101,3 +100,19 @@ The add-account experience is explicitly user-facing:
 6. Click **Save This Account**
 
 On success the UI shows **Account Saved** and **Ready to Switch** messaging.
+
+## Switch Account flow
+
+The switch flow is intentionally simple:
+1. Click **Switch** on a saved account.
+2. The switch modal opens and runs **Safety Check** automatically (or you can run it manually).
+3. Review friendly checks only:
+   - Current account backup
+   - Target account saved login
+   - Codex status
+   - Setup
+   - Result
+4. Confirm: **I understand Codex should be closed before switching.**
+5. Click **Switch Account**.
+
+The UI does not show raw dry-run JSON, fixture paths, lock internals, or stack traces.

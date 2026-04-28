@@ -29,17 +29,27 @@ If launch path/command is missing or invalid:
 ## Switch button is disabled
 The switch button stays disabled until:
 - Safety Check has run and passed
-- confirmation checkbox is checked
+- confirmation checkbox (**I understand Codex should be closed before switching**) is checked
 - target account exists
 
+## Safety Check says Codex is open
+Message:
+- **Codex appears to be open. Close it before switching.**
+
+What to do:
+1. Close Codex manually.
+2. Run **Safety Check** again.
+3. Switch only after the result says safe.
+
 ## CLI real-switch command errors
-Use either:
+Use:
 - `npx tsx cli.ts switch run <profileId-or-alias> --confirm`
-- `npx tsx cli.ts switch <profileId-or-alias> --confirm`
+- `npx tsx cli.ts switch dry-run <profileId-or-alias>`
+- `npx tsx cli.ts switch status`
 
 Windows fallback:
-- `npx.cmd tsx cli.ts ...`
-- `node .\node_modules\tsx\dist\cli.mjs cli.ts ...`
+- `npx.cmd tsx cli.ts switch run <profileId-or-alias> --confirm`
+- `node .\node_modules\tsx\dist\cli.mjs cli.ts switch run <profileId-or-alias> --confirm`
 
 ## Screenshot command fails
 `npm run screenshot` requires Playwright and browser dependencies. The script reports missing dependencies and exits with error.

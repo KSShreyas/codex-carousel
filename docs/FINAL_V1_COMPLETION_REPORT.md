@@ -4,7 +4,7 @@ Date: 2026-04-27
 
 ## Phase 7 status
 - Restored production-quality operator-console UI.
-- Fixed CLI real-switch command path and compatibility mode.
+- Fixed CLI real-switch command path using explicit `switch run` subcommand.
 - Fixed safe-by-default startup state behavior.
 - Added regression tests for UI structure, switch safety gating, CLI command behavior, and seeded state safety.
 

@@ -31,19 +31,6 @@ async function call(path: string, init?: RequestInit) {
   return data;
 }
 
-function normalizeSwitchArgs(argv: string[]): string[] {
-  const normalized = [...argv];
-  const switchIndex = normalized.findIndex((token, idx) => idx > 1 && token === 'switch');
-  if (switchIndex === -1) return normalized;
-
-  const tokenAfterSwitch = normalized[switchIndex + 1];
-  const named = new Set(['dry-run', 'status', 'clear-lock', 'run', '--help', '-h']);
-  if (!tokenAfterSwitch || tokenAfterSwitch.startsWith('-') || named.has(tokenAfterSwitch)) return normalized;
-
-  normalized.splice(switchIndex + 1, 0, 'run');
-  return normalized;
-}
-
 async function resolveProfileId(profileOrAlias: string) {
   const rows = await call('/profiles');
   const match = rows.find((p: any) => p.id === profileOrAlias || p.alias === profileOrAlias);
@@ -227,10 +214,11 @@ program.command('doctor').action(async () => {
 
 const switchCmd = program.command('switch').description('Profile switch dry-run and lock operations');
 
-switchCmd.command('dry-run <profileId>')
+switchCmd.command('dry-run <profileOrAlias>')
   .option('--fixture-root-dir <fixtureRootDir>')
-  .action(async (profileId, options) => {
-    const data = await call(`/profiles/${profileId}/switch/dry-run`, {
+  .action(async (profileOrAlias, options) => {
+    const targetProfileId = await resolveProfileId(profileOrAlias);
+    const data = await call(`/profiles/${targetProfileId}/switch/dry-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -286,4 +274,4 @@ switchCmd.command('run <profileOrAlias>')
     await executeSwitchRun(profileOrAlias, options);
   });
 
-program.parse(normalizeSwitchArgs(process.argv));
+program.parse(process.argv);

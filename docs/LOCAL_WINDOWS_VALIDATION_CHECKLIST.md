@@ -48,10 +48,10 @@ Date: 2026-04-27
 ## Switch A -> B
 
 1. Run dry-run first:
-   - `carousel switch dry-run <profileBId>`
+   - `carousel switch dry-run <profileBId-or-alias>`
 2. Confirm Codex is closed if required.
 3. Execute real switch:
-   - `carousel switch <profileBId> --confirm`
+   - `carousel switch run <profileBId-or-alias> --confirm`
 
 ## Manual verification in Codex
 
@@ -85,7 +85,7 @@ Date: 2026-04-27
 
 - `carousel profiles capture-current --alias "Profile A" --plan Plus`
 - `carousel profiles capture-current --alias "Profile B" --plan Plus`
-- `carousel switch dry-run <profileBId>`
-- `carousel switch <profileBId> --confirm`
+- `carousel switch dry-run <profileBId-or-alias>`
+- `carousel switch run <profileBId-or-alias> --confirm`
 - `carousel launch`
 - `carousel doctor`
