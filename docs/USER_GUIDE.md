@@ -14,6 +14,7 @@ This guide is written for normal daily use.
 2. Click **Scan for Codex**.
 3. Confirm the **Codex data folder**.
 4. Confirm the **Open Codex command**.
+   - Preferred value: `explorer.exe shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`
 5. Click **Save Setup**.
 
 If setup is incomplete, account switching stays blocked for safety.

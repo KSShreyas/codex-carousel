@@ -14,10 +14,10 @@
 
 ## Launch command default behavior
 - Added default command for Microsoft Store Codex AppID:
-  `start "" "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"`.
+  `explorer.exe shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`.
 - Discovery recommends this default when AppID package is detected.
-- `shell:AppsFolder\\...` input is normalized to `start "" "shell:AppsFolder\\..."`.
-- Explicit `start "" "..."` input is preserved.
+- `shell:AppsFolder\\...` or raw AppID input is normalized to the explorer.exe form.
+- Legacy `start shell:AppsFolder\\OpenAI.Codex` values are migrated/normalized.
 - Added `/api/codex/launch-test` for draft-only launch testing.
 
 ## Tests added

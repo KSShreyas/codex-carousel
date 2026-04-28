@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { adaptSettings, type FriendlySettings, toSettingsPatch } from './ui/settingsAdapter';
 import { translateBackendError } from './ui/errorTranslation';
 import { computeDirty, shouldSyncDraftFromSaved } from './ui/draftState';
-import { DEFAULT_CODEX_LAUNCH_COMMAND } from './carousel/launchCommand';
+import { DEFAULT_CODEX_LAUNCH_COMMAND, normalizeCodexLaunchCommand } from './carousel/launchCommand';
 
 type LimitStatus = 'Available' | 'Low' | 'Exhausted' | 'Unknown';
 type Source = 'Manual' | 'CodexBanner' | 'UsageDashboard' | 'Unknown';
@@ -189,6 +189,7 @@ export default function App() {
   const [addStep, setAddStep] = useState(0);
   const [loggedInStepDone, setLoggedInStepDone] = useState(false);
   const [accountSavedNotice, setAccountSavedNotice] = useState<string | null>(null);
+  const [addAccountError, setAddAccountError] = useState<string | null>(null);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   const [usageSaved, setUsageSaved] = useState({
@@ -232,6 +233,27 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const parseApiError = (payload: any, fallback: string): string => {
+    const fromBody = typeof payload?.error === 'string' ? payload.error : fallback;
+    return fromBody.replace(/^Error:\s*/i, '').trim();
+  };
+
+  const mapAddAccountError = (raw: string): string => {
+    if (/Codex appears to be running|codex process appears to be running/i.test(raw)) {
+      return 'Close Codex, then click Save This Account again.';
+    }
+    if (/No Codex profile files discovered/i.test(raw)) {
+      return 'Codex login data was not found in the selected data folder. Open Codex, sign in, then try again. If it still fails, choose another Codex data folder in Advanced Settings.';
+    }
+    if (/codexProfileRootPath is not configured/i.test(raw)) {
+      return 'Codex data folder is not configured. Run setup first.';
+    }
+    if (/Local switching is disabled/i.test(raw)) {
+      return 'Account switching setup is not complete.';
+    }
+    return translateBackendError(raw);
   };
 
   useEffect(() => {
@@ -317,7 +339,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           codexProfileRootPath: setupForm.dataFolder || null,
-          codexLaunchCommand: setupForm.launchCommand || null,
+          codexLaunchCommand: normalizeCodexLaunchCommand(setupForm.launchCommand) || null,
           enableSwitching: setupForm.enableSwitching,
         }),
       });
@@ -341,7 +363,7 @@ export default function App() {
     const res = await fetch('/api/codex/launch-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ commandOverride: command }),
+      body: JSON.stringify({ commandOverride: normalizeCodexLaunchCommand(command) }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -359,7 +381,13 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) {
-      setFriendlyError(translateBackendError(data?.error ?? 'Could not save account.'));
+      const rawError = parseApiError(data, 'Could not save account.');
+      const mapped = mapAddAccountError(rawError);
+      if (/codex appears to be running|no codex profile files discovered|codexprofilerootpath is not configured|local switching is disabled/i.test(rawError)) {
+        console.warn('[add-current-login] request failed', { status: res.status, error: rawError });
+      }
+      setAddAccountError(mapped);
+      setFriendlyError(mapped);
       if (!setupReady) setSetupWizardOpen(true);
       return;
     }
@@ -375,6 +403,7 @@ export default function App() {
 
     setCaptureForm({ alias: '', plan: 'Plus', notes: '' });
     setCaptureTouched(false);
+    setAddAccountError(null);
     setAddModalOpen(false);
     setAddStep(0);
     setLoggedInStepDone(false);
@@ -467,10 +496,12 @@ export default function App() {
 
   const saveAdvanced = async () => {
     if (!settingsDraft) return;
+    const patch = toSettingsPatch(settingsDraft);
+    patch.codexLaunchCommand = normalizeCodexLaunchCommand(patch.codexLaunchCommand);
     const res = await fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toSettingsPatch(settingsDraft)),
+      body: JSON.stringify(patch),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -526,7 +557,7 @@ export default function App() {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {!setupReady && <button className={buttonSecondaryClass} onClick={() => setSetupWizardOpen(true)}>Set Up Codex</button>}
-            <button className={buttonPrimaryClass} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
+            <button className={buttonPrimaryClass} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); }}>Add Account</button>
             <button className={buttonSecondaryClass} onClick={openCodex}>Open Codex</button>
             <button className={buttonSecondaryClass} onClick={() => setAdvancedOpen(true)} aria-label="Advanced Settings">Advanced Settings</button>
           </div>
@@ -550,7 +581,7 @@ export default function App() {
           <section className={`${cardClass} border-zinc-700`}>
             <h2 className="text-xl font-semibold text-zinc-100">No Codex accounts saved yet</h2>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-400">Add your first account by opening Codex, signing in, then saving that login in the Add Account flow.</p>
-            <button className={`mt-5 ${buttonPrimaryClass}`} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); }}>Add Account</button>
+            <button className={`mt-5 ${buttonPrimaryClass}`} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); }}>Add Account</button>
           </section>
         ) : (
           <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
@@ -684,9 +715,9 @@ export default function App() {
               <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
                 <div className="font-medium text-zinc-100">3. Confirm Launch Command</div>
                 <label className="mt-2 block text-zinc-300">Open Codex command
-                  <input className={inputClass} value={setupForm.launchCommand} onChange={(e) => { setSetupTouched(true); setSetupForm((v) => ({ ...v, launchCommand: e.target.value })); }} />
+                  <input className={inputClass} value={setupForm.launchCommand} placeholder={DEFAULT_CODEX_LAUNCH_COMMAND} onChange={(e) => { setSetupTouched(true); setSetupForm((v) => ({ ...v, launchCommand: e.target.value })); }} />
                 </label>
-                <p className="mt-1 text-xs text-zinc-500">Used only by Open Codex button. For Microsoft Store apps, the command is: {DEFAULT_CODEX_LAUNCH_COMMAND}</p>
+                <p className="mt-1 text-xs text-zinc-500">PowerShell detected AppID OpenAI.Codex_2p2nqsd0c76g0!App. Store apps launch through shell:AppsFolder.</p>
                 <button className="mt-2 rounded border border-cyan-500/70 px-3 py-1.5 text-cyan-200" onClick={() => testLaunch(setupForm.launchCommand)}>Test Launch</button>
               </section>
 
@@ -722,7 +753,7 @@ export default function App() {
                 {!setupReady ? (
                   <>
                     <p className="text-amber-100">Codex setup is required before adding accounts.</p>
-                    <button className="mt-3 rounded border border-amber-500/70 px-3 py-2 text-amber-200" onClick={() => { setSetupWizardOpen(true); setAddModalOpen(false); }}>Set Up Codex</button>
+                    <button className="mt-3 rounded border border-amber-500/70 px-3 py-2 text-amber-200" onClick={() => { setSetupWizardOpen(true); setAddModalOpen(false); setAddAccountError(null); }}>Set Up Codex</button>
                   </>
                 ) : (
                   <>
@@ -767,6 +798,7 @@ export default function App() {
             {addStep === 3 && (
               <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
                 <p className="text-zinc-200">Save this local Codex login as a switchable account.</p>
+                {addAccountError && <p className="mt-2 rounded border border-rose-500/50 bg-rose-900/20 px-2 py-1.5 text-rose-100">{addAccountError}</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button className="rounded border border-zinc-600 px-3 py-2 text-sm" onClick={() => setAddStep(2)}>Back</button>
                   <button className="rounded border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950" onClick={saveAccount}>Save This Account</button>
@@ -775,7 +807,7 @@ export default function App() {
             )}
 
             <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm" onClick={() => { setAddModalOpen(false); setAddStep(0); }}>Cancel</button>
+              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm" onClick={() => { setAddModalOpen(false); setAddStep(0); setAddAccountError(null); }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -881,9 +913,9 @@ export default function App() {
               <input className={inputClass} value={settingsDraft.dataFolder} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, dataFolder: e.target.value } : s); }} />
             </label>
             <label className="block text-zinc-300">Open Codex command
-              <input className={inputClass} value={settingsDraft.appPath} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, appPath: e.target.value } : s); }} />
+              <input className={inputClass} value={settingsDraft.appPath} placeholder={DEFAULT_CODEX_LAUNCH_COMMAND} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, appPath: e.target.value } : s); }} />
             </label>
-            <p className="text-xs text-zinc-500">For Microsoft Store apps, the command is: {DEFAULT_CODEX_LAUNCH_COMMAND}</p>
+            <p className="text-xs text-zinc-500">PowerShell detected AppID OpenAI.Codex_2p2nqsd0c76g0!App. Store apps launch through shell:AppsFolder.</p>
             <button className="w-full rounded-lg border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => testLaunch(settingsDraft.appPath)}>Test Launch</button>
             <label className="flex items-center gap-2 text-zinc-300">
               <input type="checkbox" checked={settingsDraft.requireClosedBeforeSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, requireClosedBeforeSwitch: e.target.checked } : s); }} />

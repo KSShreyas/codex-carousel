@@ -4,7 +4,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { DurableStore } from './durableStore';
 import { ProfilePlan, SnapshotStatus, SwitchEventType, VerificationStatus } from './types';
-import { normalizeLaunchCommand } from './launchCommand';
+import { normalizeCodexLaunchCommand } from './launchCommand';
 
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
@@ -368,7 +368,7 @@ export class SwitchEngine {
   }
 
   async launchCodex(commandOverride?: string | null) {
-    const command = normalizeLaunchCommand(commandOverride ?? this.store.getSettings().codexLaunchCommand);
+    const command = normalizeCodexLaunchCommand(commandOverride ?? this.store.getSettings().codexLaunchCommand);
     if (!command) throw new Error('codexLaunchCommand is not configured');
 
     await this.writeLedgerEvents(SwitchEventType.CODEX_LAUNCH_REQUESTED, {

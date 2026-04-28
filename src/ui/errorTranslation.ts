@@ -3,10 +3,10 @@ export function translateBackendError(input: string): string {
   if (!value) return 'Something went wrong. Please try again.';
 
   if (/local switching is disabled/i.test(value)) {
-    return 'Setup required. Complete Codex setup before saving or switching accounts.';
+    return 'Account switching setup is not complete.';
   }
   if (/codexProfileRootPath is not configured/i.test(value)) {
-    return 'Codex setup incomplete. Run setup before adding or switching accounts.';
+    return 'Codex data folder is not configured. Run setup first.';
   }
   if (/codexLaunchCommand is not configured/i.test(value)) {
     return 'Open Codex command is not configured. Set it in Advanced Settings.';
@@ -18,10 +18,10 @@ export function translateBackendError(input: string): string {
     return 'Setup required. Complete Codex setup before saving or switching accounts.';
   }
   if (/codex process appears to be running/i.test(value)) {
-    return 'Codex appears to be open. Close it before switching.';
+    return 'Close Codex, then click Save This Account again.';
   }
   if (/no codex profile files discovered/i.test(value)) {
-    return 'Could not find Codex login data. Open Codex, login, then try Save This Account again.';
+    return 'Codex login data was not found in the selected data folder. Open Codex, sign in, then try again. If it still fails, choose another Codex data folder in Advanced Settings.';
   }
   if (/preflight failed|dry-run produced warnings|switch lock exists/i.test(value)) {
     return 'Safety Check failed. Fix setup issues, close Codex, then try again.';

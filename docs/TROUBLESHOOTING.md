@@ -19,7 +19,7 @@ Usually the Open Codex command is missing or invalid.
 
 Fix:
 - open **Advanced Settings**
-- update the Open Codex command
+- update the Open Codex command to `explorer.exe shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App`
 - save settings
 
 ## Switch blocked because Codex is open
