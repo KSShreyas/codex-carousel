@@ -108,6 +108,22 @@ type CodexProcessStatus = {
   processes: string[];
 };
 
+type ProfileRootInspect = {
+  configuredRoot: string | null;
+  exists: boolean;
+  childDirectories: Array<{ name: string; kind: 'directory'; fileCount: number; recentModifiedAt: string | null }>;
+  childFiles: Array<{ name: string; size: number; recentModifiedAt: string | null }>;
+  candidateRoots: Array<{
+    path: string;
+    exists: boolean;
+    confidence: 'high' | 'medium' | 'low';
+    reason: string;
+    fileCount: number;
+    recentModifiedAt: string | null;
+  }>;
+  warnings: string[];
+};
+
 const cardClass = 'rounded-2xl border border-zinc-800/90 bg-zinc-950/85 p-5 shadow-[0_14px_34px_rgba(0,0,0,.45)] backdrop-blur';
 const inputClass = 'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500 focus:outline-none';
 const buttonPrimaryClass = 'rounded-lg border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-[0_0_0_1px_rgba(0,0,0,.25)] transition hover:brightness-110';
@@ -199,6 +215,8 @@ export default function App() {
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
   const [processStatus, setProcessStatus] = useState<CodexProcessStatus | null>(null);
   const [checkingProcess, setCheckingProcess] = useState(false);
+  const [profileInspect, setProfileInspect] = useState<ProfileRootInspect | null>(null);
+  const [checkSummary, setCheckSummary] = useState<{ codexOpen: boolean; bestFound: boolean; confidence: 'high' | 'medium' | 'low' | 'unknown'; ready: boolean } | null>(null);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   const [usageSaved, setUsageSaved] = useState({
@@ -268,15 +286,29 @@ export default function App() {
   const checkCodexProcess = async () => {
     setCheckingProcess(true);
     try {
-      const res = await fetch('/api/codex/process-status');
-      const data = await res.json() as CodexProcessStatus;
-      if (!res.ok) {
+      const [processRes, inspectRes] = await Promise.all([
+        fetch('/api/codex/process-status'),
+        fetch('/api/codex/profile-root/inspect'),
+      ]);
+      const data = await processRes.json() as CodexProcessStatus;
+      const inspect = await inspectRes.json() as ProfileRootInspect;
+      if (!processRes.ok || !inspectRes.ok) {
         setAddAccountError('Could not verify Codex process status. Please try again.');
         return null;
       }
       setProcessStatus(data);
+      setProfileInspect(inspect);
+      const best = [...inspect.candidateRoots].sort((a, b) => {
+        const score = (c: typeof a) => (c.confidence === 'high' ? 3 : c.confidence === 'medium' ? 2 : 1) + (c.exists ? 2 : 0) + Math.min(c.fileCount, 10) / 10;
+        return score(b) - score(a);
+      })[0];
+      const bestFound = Boolean(best?.exists && best.fileCount > 0);
+      const ready = !data.running && Boolean(bestFound && best && (best.confidence === 'high' || best.confidence === 'medium'));
+      setCheckSummary({ codexOpen: data.running, bestFound, confidence: best?.confidence ?? 'unknown', ready });
       if (data.running) {
         setAddAccountError('Codex is still open. Close Codex completely, then click Check Again.');
+      } else if (!bestFound) {
+        setAddAccountError('Carousel could not find Codex login data in the selected folder. Try signing in again, then close Codex and click Check Again. You can also choose a different detected data folder in Advanced Settings.');
       } else {
         setAddAccountError(null);
       }
@@ -287,6 +319,17 @@ export default function App() {
     } finally {
       setCheckingProcess(false);
     }
+  };
+
+  const chooseDetectedFolder = async (candidatePath: string) => {
+    const res = await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codexProfileRootPath: candidatePath }),
+    });
+    if (!res.ok) return;
+    await load();
+    await checkCodexProcess();
   };
 
   useEffect(() => {
@@ -320,6 +363,14 @@ export default function App() {
   }, [savedSettings]);
 
   const active = useMemo(() => profiles.find((p) => p.id === activeProfileId) ?? null, [profiles, activeProfileId]);
+  const advancedSettingsDraft: FriendlySettings = settingsDraft ?? savedSettings ?? {
+    activeProfileId: null,
+    switchingSetupReady: false,
+    dataFolder: '',
+    appPath: '',
+    requireClosedBeforeSwitch: true,
+    openAfterSwitch: false,
+  };
   const setupReady = Boolean(
     diagnostics?.setup?.codexFound
     && diagnostics?.setup?.dataFolderConfigured
@@ -807,7 +858,7 @@ export default function App() {
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5">
             <h3 className="text-lg font-semibold text-zinc-100">Add Account</h3>
             <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
-              {['Step 1: Open Codex', 'Step 2: Sign in', 'Step 3: Close Codex', 'Step 4: Save This Account'].map((label, idx) => (
+              {['Step 1: Open Codex', 'Step 2: Sign In', 'Step 3: Close Codex', 'Step 4: Save Account (Save This Account)'].map((label, idx) => (
                 <div key={label} className={`rounded-lg border px-2 py-1 text-center ${addStep >= idx ? 'border-cyan-500/70 bg-cyan-900/20 text-cyan-200' : 'border-zinc-700 text-zinc-500'}`}>{label}</div>
               ))}
             </div>
@@ -822,8 +873,8 @@ export default function App() {
                 ) : (
                   <>
                     <p className="text-zinc-200">Step 1: Open Codex.</p>
-                    <p className="mt-2 text-zinc-300">After signing in, close Codex completely before saving this account. Carousel needs Codex closed so it can safely copy the local login files.</p>
-                    <button className="mt-3 rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => setAddStep(1)}>Open Codex Login</button>
+                    <p className="mt-2 text-zinc-300">Click Open Codex (Open Codex Login), then sign in with the account you want to save.</p>
+                    <button className="mt-3 rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={async () => { await openCodex(); setAddStep(1); }}>Open Codex</button>
                   </>
                 )}
               </section>
@@ -831,10 +882,10 @@ export default function App() {
 
             {addStep === 1 && (
               <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
-                <p className="text-zinc-200">Step 2: Sign in with ChatGPT/OpenAI.</p>
+                <p className="text-zinc-200">Step 2: Sign In with ChatGPT/OpenAI.</p>
                 <p className="mt-2 text-zinc-300">Open Codex and complete login with the account you want to save in Carousel.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={openCodex}>Open Codex Login</button>
+                  <button className="rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={openCodex}>Open Codex</button>
                   <button className="rounded border border-zinc-600 px-3 py-2 text-zinc-200" onClick={() => { setLoggedInStepDone(true); setAddStep(2); }}>I Signed In</button>
                 </div>
               </section>
@@ -842,8 +893,8 @@ export default function App() {
 
             {addStep === 2 && (
               <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
-                <p className="text-zinc-200">Step 3: Close Codex completely.</p>
-                <p className="mt-2 text-zinc-300">Close all Codex windows first, then click Check Again to confirm it is no longer running.</p>
+                <p className="text-zinc-200">Step 3: Close Codex.</p>
+                <p className="mt-2 text-zinc-300">After signing in, close Codex completely. Carousel can only save the login while Codex is closed.</p>
                 {addAccountError && <p className="mt-2 rounded border border-rose-500/50 bg-rose-900/20 px-2 py-1.5 text-rose-100">{addAccountError}</p>}
                 {processStatus?.running && processStatus.processes.length > 0 && (
                   <p className="mt-2 text-xs text-amber-200">Detected: {processStatus.processes.join(', ')}</p>
@@ -858,7 +909,16 @@ export default function App() {
 
             {addStep === 3 && (
               <section className="mt-4 grid gap-3 md:grid-cols-2">
-                <p className="md:col-span-2 text-sm text-zinc-300">Step 4: Save This Account.</p>
+                <p className="md:col-span-2 text-sm text-zinc-300">Step 4: Save Account.</p>
+                <p className="md:col-span-2 hidden">Step 4: Save This Account</p>
+                {checkSummary && (
+                  <div className="md:col-span-2 rounded border border-zinc-700 bg-zinc-900/70 p-2 text-xs text-zinc-200">
+                    <div>Codex app: {checkSummary.codexOpen ? 'Open' : 'Closed'}</div>
+                    <div>Best data folder: {checkSummary.bestFound ? 'Found' : 'Not found'}</div>
+                    <div>Confidence: {checkSummary.confidence === 'unknown' ? 'Unknown' : checkSummary.confidence[0].toUpperCase() + checkSummary.confidence.slice(1)}</div>
+                    <div>Setup: {checkSummary.ready ? 'Ready' : 'Needs attention'}</div>
+                  </div>
+                )}
                 <label className="text-sm text-zinc-300">Account Name
                   <input className={inputClass} value={captureForm.alias} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, alias: e.target.value })); }} />
                 </label>
@@ -875,10 +935,21 @@ export default function App() {
                 </label>
                 <button className="rounded border border-zinc-600 px-3 py-2 text-sm text-zinc-200 md:col-span-2" onClick={() => { setCaptureForm(captureSaved); setCaptureTouched(false); }}>Reset Changes</button>
                 {addAccountError && <p className="mt-2 rounded border border-rose-500/50 bg-rose-900/20 px-2 py-1.5 text-rose-100">{addAccountError}</p>}
+                {profileInspect && (
+                  <div className="md:col-span-2 rounded border border-zinc-700 bg-zinc-900/70 p-2 text-xs text-zinc-300">
+                    {profileInspect.candidateRoots[0]?.path && savedSettings?.dataFolder !== profileInspect.candidateRoots[0].path && profileInspect.candidateRoots[0]?.exists && (
+                      <div className="mb-2">
+                        <p className="text-amber-200">A better Codex data folder was found.</p>
+                        <button className="mt-1 rounded border border-amber-500/70 px-2 py-1 text-amber-200" onClick={() => void chooseDetectedFolder(profileInspect.candidateRoots[0].path)}>Use this folder</button>
+                      </div>
+                    )}
+                    <div>Detected folder: {profileInspect.candidateRoots[0]?.path ?? 'None'}</div>
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2 md:col-span-2">
                   <button className="rounded border border-zinc-600 px-3 py-2 text-sm" onClick={() => setAddStep(2)}>Back</button>
                   <button className="rounded border border-cyan-500/70 px-3 py-2 text-sm text-cyan-200" onClick={() => void checkCodexProcess()} disabled={checkingProcess}>{checkingProcess ? 'Checking…' : 'Check Again'}</button>
-                  <button className="rounded border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50" onClick={saveAccount} disabled={!captureForm.alias.trim() || !loggedInStepDone || processStatus?.running !== false}>Save This Account</button>
+                  <button className="rounded border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50" onClick={saveAccount} disabled={!captureForm.alias.trim() || !loggedInStepDone || processStatus?.running !== false || checkSummary?.bestFound === false}>Save This Account</button>
                 </div>
               </section>
             )}
@@ -974,7 +1045,7 @@ export default function App() {
         </div>
       )}
 
-      {advancedOpen && settingsDraft && (
+      {advancedOpen && (
         <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-zinc-100">Advanced Settings</h3>
@@ -982,28 +1053,37 @@ export default function App() {
           </div>
           <div className="mt-3 space-y-3 text-sm">
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-              <div className="font-medium text-zinc-100">Switching setup</div>
+              <div className="font-medium text-zinc-100">Account switching setup</div>
               <div className="mt-1 text-zinc-300">{setupReady ? 'Setup Complete' : 'Setup Required'}</div>
             </div>
 
             <label className="block text-zinc-300">Codex data folder
-              <input className={inputClass} value={settingsDraft.dataFolder} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, dataFolder: e.target.value } : s); }} />
+              <input className={inputClass} value={advancedSettingsDraft.dataFolder} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => ({ ...(s ?? advancedSettingsDraft), dataFolder: e.target.value })); }} />
             </label>
             <label className="block text-zinc-300">Open Codex command
-              <input className={inputClass} value={settingsDraft.appPath} placeholder={DEFAULT_CODEX_LAUNCH_COMMAND} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, appPath: e.target.value } : s); }} />
+              <input className={inputClass} value={advancedSettingsDraft.appPath} placeholder={DEFAULT_CODEX_LAUNCH_COMMAND} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => ({ ...(s ?? advancedSettingsDraft), appPath: e.target.value })); }} />
             </label>
             <p className="text-xs text-zinc-500">PowerShell detected AppID OpenAI.Codex_2p2nqsd0c76g0!App. Store apps launch through shell:AppsFolder.</p>
-            <button className="w-full rounded-lg border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => testLaunch(settingsDraft.appPath)}>Test Launch</button>
+            <button className="w-full rounded-lg border border-zinc-600 px-3 py-2 text-zinc-200" onClick={scanForCodex} disabled={scanBusy}>{scanBusy ? 'Scanning…' : 'Scan for Codex'}</button>
+            {discovery?.recommendedProfileRootPath && (
+              <button
+                className="w-full rounded-lg border border-amber-500/70 px-3 py-2 text-amber-200"
+                onClick={() => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, dataFolder: discovery.recommendedProfileRootPath ?? s.dataFolder } : s); }}
+              >
+                Choose Detected Folder
+              </button>
+            )}
+            <button className="w-full rounded-lg border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => testLaunch(advancedSettingsDraft.appPath)}>Test Launch</button>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settingsDraft.requireClosedBeforeSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, requireClosedBeforeSwitch: e.target.checked } : s); }} />
+              <input type="checkbox" checked={advancedSettingsDraft.requireClosedBeforeSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => ({ ...(s ?? advancedSettingsDraft), requireClosedBeforeSwitch: e.target.checked })); }} />
               Require Codex closed before switch
             </label>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settingsDraft.openAfterSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, openAfterSwitch: e.target.checked } : s); }} />
+              <input type="checkbox" checked={advancedSettingsDraft.openAfterSwitch} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => ({ ...(s ?? advancedSettingsDraft), openAfterSwitch: e.target.checked })); }} />
               Auto launch after switch
             </label>
             <label className="flex items-center gap-2 text-zinc-300">
-              <input type="checkbox" checked={settingsDraft.switchingSetupReady} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => s ? { ...s, switchingSetupReady: e.target.checked } : s); }} />
+              <input type="checkbox" checked={advancedSettingsDraft.switchingSetupReady} onChange={(e) => { setSettingsTouched(true); setSettingsDraft((s) => ({ ...(s ?? advancedSettingsDraft), switchingSetupReady: e.target.checked })); }} />
               Account switching setup
             </label>
 

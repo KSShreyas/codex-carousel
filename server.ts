@@ -17,6 +17,7 @@ import { CodexDiscoveryService } from './src/carousel/codexDiscovery';
 import { applyCodexSetup } from './src/carousel/codexSetup';
 import { buildFailedSafetyCheck, buildFriendlySafetyCheck } from './src/carousel/safetyCheck';
 import { normalizeCodexLaunchCommand } from './src/carousel/launchCommand';
+import os from 'os';
 
 function parsePlan(input: any): ProfilePlan {
   return Object.values(ProfilePlan).includes(input) ? input : ProfilePlan.Unknown;
@@ -41,6 +42,121 @@ type AddAccountErrorCode =
   | 'DATA_FOLDER_MISSING'
   | 'NO_LOGIN_DATA_FOUND'
   | 'UNKNOWN';
+
+type InspectCandidate = {
+  path: string;
+  exists: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  fileCount: number;
+  recentModifiedAt: string | null;
+};
+
+function toIsoOrNull(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return new Date(value).toISOString();
+}
+
+async function safeDirectoryStats(dir: string) {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const childDirectories: Array<{ name: string; kind: 'directory'; fileCount: number; recentModifiedAt: string | null }> = [];
+    const childFiles: Array<{ name: string; size: number; recentModifiedAt: string | null }> = [];
+    let fileCount = 0;
+    let mostRecentMtime = 0;
+    let keywordHits = 0;
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const subEntries = await fs.readdir(full, { withFileTypes: true }).catch(() => []);
+        const subFileCount = subEntries.filter((sub) => sub.isFile()).length;
+        const stat = await fs.stat(full).catch(() => null);
+        childDirectories.push({
+          name: entry.name,
+          kind: 'directory',
+          fileCount: subFileCount,
+          recentModifiedAt: toIsoOrNull(stat?.mtimeMs ?? 0),
+        });
+        fileCount += subFileCount;
+        mostRecentMtime = Math.max(mostRecentMtime, stat?.mtimeMs ?? 0);
+        if (/(auth|session|config|state|token|login)/i.test(entry.name)) keywordHits += 1;
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(full).catch(() => null);
+        childFiles.push({
+          name: entry.name,
+          size: stat?.size ?? 0,
+          recentModifiedAt: toIsoOrNull(stat?.mtimeMs ?? 0),
+        });
+        fileCount += 1;
+        mostRecentMtime = Math.max(mostRecentMtime, stat?.mtimeMs ?? 0);
+        if (/(auth|session|config|state|token|login)/i.test(entry.name)) keywordHits += 1;
+      }
+    }
+    return { exists: true, childDirectories, childFiles, fileCount, mostRecentMtime, keywordHits };
+  } catch {
+    return { exists: false, childDirectories: [], childFiles: [], fileCount: 0, mostRecentMtime: 0, keywordHits: 0 };
+  }
+}
+
+async function buildProfileRootInspect(configuredRoot: string | null): Promise<{
+  configuredRoot: string | null;
+  exists: boolean;
+  childDirectories: Array<{ name: string; kind: 'directory'; fileCount: number; recentModifiedAt: string | null }>;
+  childFiles: Array<{ name: string; size: number; recentModifiedAt: string | null }>;
+  candidateRoots: InspectCandidate[];
+  warnings: string[];
+}> {
+  const home = os.homedir();
+  const localAppData = process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+  const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+  const userProfile = process.env.USERPROFILE ?? home;
+  const packageRoot = path.join(localAppData, 'Packages', 'OpenAI.Codex_2p2nqsd0c76g0');
+  const candidates = [
+    configuredRoot ?? null,
+    path.join(packageRoot, 'LocalState'),
+    path.join(packageRoot, 'RoamingState'),
+    path.join(packageRoot, 'LocalCache'),
+    path.join(packageRoot, 'LocalCache', 'Roaming'),
+    path.join(packageRoot, 'LocalCache', 'Local'),
+    path.join(appData, 'Codex'),
+    path.join(localAppData, 'Codex'),
+    path.join(userProfile, '.codex'),
+  ].filter((v, idx, arr): v is string => Boolean(v) && arr.indexOf(v) === idx);
+
+  const warnings: string[] = [];
+  const candidateRoots: InspectCandidate[] = [];
+  for (const candidate of candidates) {
+    const stats = await safeDirectoryStats(candidate);
+    const recent = stats.mostRecentMtime > (Date.now() - 1000 * 60 * 60 * 24);
+    const score = (stats.exists ? 1 : 0) + (stats.fileCount > 0 ? 1 : 0) + (recent ? 1 : 0) + (stats.keywordHits > 0 ? 1 : 0);
+    const confidence: InspectCandidate['confidence'] = score >= 4 ? 'high' : score >= 2 ? 'medium' : 'low';
+    const reason = !stats.exists
+      ? 'Folder does not exist.'
+      : stats.fileCount === 0
+        ? 'Folder exists but appears empty/default.'
+        : `Found ${stats.fileCount} files; keyword matches: ${stats.keywordHits}; recent update: ${recent ? 'yes' : 'no'}.`;
+    candidateRoots.push({
+      path: candidate,
+      exists: stats.exists,
+      confidence,
+      reason,
+      fileCount: stats.fileCount,
+      recentModifiedAt: toIsoOrNull(stats.mostRecentMtime),
+    });
+  }
+  candidateRoots.sort((a, b) => (b.fileCount - a.fileCount) || a.path.localeCompare(b.path));
+  const configuredStats = configuredRoot ? await safeDirectoryStats(configuredRoot) : null;
+  if (configuredRoot && configuredStats && !configuredStats.exists) warnings.push('Configured Codex data folder does not exist.');
+  if (configuredRoot && configuredStats && configuredStats.exists && configuredStats.fileCount === 0) warnings.push('Configured Codex data folder appears empty.');
+  return {
+    configuredRoot,
+    exists: configuredStats?.exists ?? false,
+    childDirectories: configuredStats?.childDirectories ?? [],
+    childFiles: configuredStats?.childFiles ?? [],
+    candidateRoots,
+    warnings,
+  };
+}
 
 function sanitizeErrorMessage(input: unknown): string {
   return String(input ?? 'Unknown error').replace(/^Error:\s*/i, '').trim();
@@ -380,12 +496,18 @@ async function startServer() {
     res.json(status);
   });
 
+  app.get('/api/codex/profile-root/inspect', async (_req, res) => {
+    const settings = store.getSettings();
+    const inspect = await buildProfileRootInspect(settings.codexProfileRootPath ?? null);
+    res.json(inspect);
+  });
+
   app.post('/api/codex/launch', async (_req, res) => {
     try {
       const result = await switchEngine.launchCodex();
       res.json(result);
     } catch (error) {
-      res.status(400).json({ error: String(error) });
+      res.status(400).json({ error: sanitizeErrorMessage(error) });
     }
   });
 
@@ -395,7 +517,7 @@ async function startServer() {
       const result = await switchEngine.launchCodex(commandOverride);
       res.json(result);
     } catch (error) {
-      res.status(400).json({ error: String(error) });
+      res.status(400).json({ error: sanitizeErrorMessage(error) });
     }
   });
 
@@ -413,9 +535,39 @@ async function startServer() {
       });
       res.json(result);
     } catch (error) {
-      res.status(400).json({ error: String(error) });
+      res.status(400).json({ error: sanitizeErrorMessage(error) });
     }
   });
+
+  if (process.env.CAROUSEL_E2E_FIXTURE_MODE === 'true') {
+    const fixtureRoot = path.join(config.stateDir, 'e2e', 'codex-profile-root');
+    app.post('/api/e2e/reset', async (_req, res) => {
+      await fs.rm(path.join(config.stateDir, 'durable-state.json'), { force: true });
+      await fs.rm(path.join(config.stateDir, 'durable-state.backup.json'), { force: true });
+      await fs.rm(path.join(config.stateDir, 'profile-snapshots'), { recursive: true, force: true });
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+      await fs.mkdir(fixtureRoot, { recursive: true });
+      await store.load();
+      res.json({ ok: true, fixtureRoot });
+    });
+    app.post('/api/e2e/seed-codex-login', async (req, res) => {
+      const marker = String(req.body?.marker ?? 'FIXTURE_ACCOUNT_A');
+      await fs.mkdir(fixtureRoot, { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, 'session.json'), JSON.stringify({ marker, fixture: true }, null, 2), 'utf-8');
+      await fs.writeFile(path.join(fixtureRoot, 'settings.json'), JSON.stringify({ theme: 'dark', fixture: true }, null, 2), 'utf-8');
+      await store.patchSettings({
+        codexProfileRootPath: fixtureRoot,
+        localSwitchingEnabled: true,
+        codexLaunchCommand: normalizeCodexLaunchCommand(store.getSettings().codexLaunchCommand) ?? normalizeCodexLaunchCommand('OpenAI.Codex_2p2nqsd0c76g0!App'),
+      });
+      res.json({ ok: true, fixtureRoot, marker });
+    });
+    app.post('/api/e2e/clear', async (_req, res) => {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+      await fs.mkdir(fixtureRoot, { recursive: true });
+      res.json({ ok: true, fixtureRoot });
+    });
+  }
 
   app.post('/api/profiles/:id/switch/dry-run', async (req, res) => {
     const targetProfileId = req.params.id;

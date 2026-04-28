@@ -80,7 +80,7 @@ export class SwitchEngine {
     await this.assertCodexProcessSafe();
 
     const sourceEntries = await this.listCodexSourceEntries(profileRoot);
-    if (sourceEntries.length === 0) {
+    if (sourceEntries.length === 0 || !(await this.hasLikelyLoginData(profileRoot))) {
       throw new Error('No Codex profile files discovered under configured codexProfileRootPath');
     }
 
@@ -593,8 +593,26 @@ export class SwitchEngine {
   }
 
   private async listCodexSourceEntries(root: string) {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries.filter((entry) => !entry.name.startsWith('.')).map((entry) => path.join(root, entry.name));
+    const files: string[] = [];
+    const walk = async (dir: string) => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+          continue;
+        }
+        if (entry.isFile()) files.push(full);
+      }
+    };
+    await walk(root);
+    return files;
+  }
+
+  private async hasLikelyLoginData(root: string) {
+    const names = (await this.listCodexSourceEntries(root)).map((file) => path.basename(file).toLowerCase());
+    return names.some((name) => /(auth|session|login|config|state)/i.test(name));
   }
 
   private async copyTreeWithChecksums(srcDir: string, destDir: string) {

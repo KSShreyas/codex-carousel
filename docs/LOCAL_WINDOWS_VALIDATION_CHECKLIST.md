@@ -66,3 +66,12 @@ Confirm logs/UI do not expose:
 
 ## 9) Final sign-off
 Do not mark release complete until all checks above pass on real Windows host.
+
+## Core local flow checklist
+- [ ] Click Add Account.
+- [ ] Open Codex.
+- [ ] Sign in.
+- [ ] Close Codex completely.
+- [ ] Click Check Again.
+- [ ] Save This Account.
+- [ ] New account appears in dashboard.

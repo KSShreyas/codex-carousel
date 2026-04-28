@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './e2e',
-  testMatch: /ui\.visual\.pw\.ts/,
+  testDir: './tests/e2e',
+  testMatch: /app-flow\.spec\.ts/,
   timeout: 60_000,
   use: {
     baseURL: 'http://127.0.0.1:3000',
