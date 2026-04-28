@@ -101,6 +101,13 @@ type DiscoveryResult = {
   warnings: string[];
 };
 
+type AddAccountErrorCode = 'CODEX_RUNNING' | 'SETUP_REQUIRED' | 'DATA_FOLDER_MISSING' | 'NO_LOGIN_DATA_FOUND' | 'UNKNOWN';
+
+type CodexProcessStatus = {
+  running: boolean;
+  processes: string[];
+};
+
 const cardClass = 'rounded-2xl border border-zinc-800/90 bg-zinc-950/85 p-5 shadow-[0_14px_34px_rgba(0,0,0,.45)] backdrop-blur';
 const inputClass = 'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500 focus:outline-none';
 const buttonPrimaryClass = 'rounded-lg border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-[0_0_0_1px_rgba(0,0,0,.25)] transition hover:brightness-110';
@@ -190,6 +197,8 @@ export default function App() {
   const [loggedInStepDone, setLoggedInStepDone] = useState(false);
   const [accountSavedNotice, setAccountSavedNotice] = useState<string | null>(null);
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
+  const [processStatus, setProcessStatus] = useState<CodexProcessStatus | null>(null);
+  const [checkingProcess, setCheckingProcess] = useState(false);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   const [usageSaved, setUsageSaved] = useState({
@@ -240,20 +249,44 @@ export default function App() {
     return fromBody.replace(/^Error:\s*/i, '').trim();
   };
 
-  const mapAddAccountError = (raw: string): string => {
-    if (/Codex appears to be running|codex process appears to be running/i.test(raw)) {
-      return 'Close Codex, then click Save This Account again.';
+  const mapAddAccountError = (raw: string, code?: AddAccountErrorCode): string => {
+    if (code === 'CODEX_RUNNING' || /Codex appears to be running|codex process appears to be running/i.test(raw)) {
+      return 'Codex is still open. Close Codex completely, then click Check Again.';
     }
-    if (/No Codex profile files discovered/i.test(raw)) {
-      return 'Codex login data was not found in the selected data folder. Open Codex, sign in, then try again. If it still fails, choose another Codex data folder in Advanced Settings.';
+    if (code === 'SETUP_REQUIRED' || /Local switching is disabled/i.test(raw)) {
+      return 'Account switching setup is not complete. Open Advanced Settings and finish setup.';
     }
-    if (/codexProfileRootPath is not configured/i.test(raw)) {
-      return 'Codex data folder is not configured. Run setup first.';
+    if (code === 'DATA_FOLDER_MISSING' || /codexProfileRootPath is not configured|Configured codexProfileRootPath does not exist/i.test(raw)) {
+      return 'Codex data folder was not found. Open Advanced Settings and choose the correct data folder.';
     }
-    if (/Local switching is disabled/i.test(raw)) {
-      return 'Account switching setup is not complete.';
+    if (code === 'NO_LOGIN_DATA_FOUND' || /No Codex profile files discovered/i.test(raw)) {
+      return 'Codex login data was not found. Open Codex, sign in, close Codex, then try again.';
     }
-    return translateBackendError(raw);
+    return translateBackendError(raw.replace(/^Error:\s*/i, '').trim());
+  };
+
+  const checkCodexProcess = async () => {
+    setCheckingProcess(true);
+    try {
+      const res = await fetch('/api/codex/process-status');
+      const data = await res.json() as CodexProcessStatus;
+      if (!res.ok) {
+        setAddAccountError('Could not verify Codex process status. Please try again.');
+        return null;
+      }
+      setProcessStatus(data);
+      if (data.running) {
+        setAddAccountError('Codex is still open. Close Codex completely, then click Check Again.');
+      } else {
+        setAddAccountError(null);
+      }
+      return data;
+    } catch {
+      setAddAccountError('Could not verify Codex process status. Please try again.');
+      return null;
+    } finally {
+      setCheckingProcess(false);
+    }
   };
 
   useEffect(() => {
@@ -374,6 +407,10 @@ export default function App() {
   };
 
   const saveAccount = async () => {
+    const status = processStatus?.running ? processStatus : await checkCodexProcess();
+    if (!status || status.running) {
+      return;
+    }
     const res = await fetch('/api/accounts/add-current-login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -382,13 +419,12 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) {
       const rawError = parseApiError(data, 'Could not save account.');
-      const mapped = mapAddAccountError(rawError);
-      if (/codex appears to be running|no codex profile files discovered|codexprofilerootpath is not configured|local switching is disabled/i.test(rawError)) {
-        console.warn('[add-current-login] request failed', { status: res.status, error: rawError });
-      }
+      const mapped = mapAddAccountError(rawError, data?.code);
       setAddAccountError(mapped);
       setFriendlyError(mapped);
-      if (!setupReady) setSetupWizardOpen(true);
+      if (data?.code === 'CODEX_RUNNING') {
+        setProcessStatus({ running: true, processes: processStatus?.processes ?? [] });
+      }
       return;
     }
 
@@ -404,10 +440,11 @@ export default function App() {
     setCaptureForm({ alias: '', plan: 'Plus', notes: '' });
     setCaptureTouched(false);
     setAddAccountError(null);
+    setProcessStatus(null);
     setAddModalOpen(false);
     setAddStep(0);
     setLoggedInStepDone(false);
-    setAccountSavedNotice('Account Saved · Ready to Switch');
+    setAccountSavedNotice('Account saved. You can now switch to it.');
     setFriendlyError(null);
     await load();
   };
@@ -532,6 +569,33 @@ export default function App() {
     await load();
   };
 
+  useEffect(() => {
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (switchModalOpen) {
+        setSwitchModalOpen(false);
+        return;
+      }
+      if (usageModalOpen) {
+        setUsageModalOpen(false);
+        return;
+      }
+      if (addModalOpen) {
+        setAddModalOpen(false);
+        return;
+      }
+      if (setupWizardOpen) {
+        setSetupWizardOpen(false);
+        return;
+      }
+      if (advancedOpen) {
+        setAdvancedOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [advancedOpen, addModalOpen, setupWizardOpen, switchModalOpen, usageModalOpen]);
+
   if (loading) {
     return <div className="min-h-screen bg-[#06080B] p-6 text-zinc-100">Loading Codex Carousel…</div>;
   }
@@ -557,15 +621,15 @@ export default function App() {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {!setupReady && <button className={buttonSecondaryClass} onClick={() => setSetupWizardOpen(true)}>Set Up Codex</button>}
-            <button className={buttonPrimaryClass} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); }}>Add Account</button>
+            <button className={buttonPrimaryClass} onClick={() => { setAddModalOpen(true); setAdvancedOpen(false); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); setProcessStatus(null); }}>Add Account</button>
             <button className={buttonSecondaryClass} onClick={openCodex}>Open Codex</button>
-            <button className={buttonSecondaryClass} onClick={() => setAdvancedOpen(true)} aria-label="Advanced Settings">Advanced Settings</button>
+            <button className={buttonSecondaryClass} onClick={() => { setAdvancedOpen(true); setAddModalOpen(false); setSwitchModalOpen(false); setUsageModalOpen(false); }} aria-label="Advanced Settings">Advanced Settings</button>
           </div>
 
           {friendlyError && <div className="mt-4 rounded-xl border border-rose-500/50 bg-rose-900/20 px-4 py-2.5 text-sm text-rose-100">{friendlyError}</div>}
           {accountSavedNotice && (
             <div className="mt-4 rounded-xl border border-emerald-500/50 bg-emerald-900/20 px-4 py-2.5 text-sm text-emerald-100">
-              {accountSavedNotice}. Saved locally. Verify by opening Codex.
+              {accountSavedNotice}
               <button className="ml-2 underline" onClick={() => setAccountSavedNotice(null)}>Dismiss</button>
             </div>
           )}
@@ -581,7 +645,7 @@ export default function App() {
           <section className={`${cardClass} border-zinc-700`}>
             <h2 className="text-xl font-semibold text-zinc-100">No Codex accounts saved yet</h2>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-400">Add your first account by opening Codex, signing in, then saving that login in the Add Account flow.</p>
-            <button className={`mt-5 ${buttonPrimaryClass}`} onClick={() => { setAddModalOpen(true); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); }}>Add Account</button>
+            <button className={`mt-5 ${buttonPrimaryClass}`} onClick={() => { setAddModalOpen(true); setAdvancedOpen(false); setAddStep(0); setLoggedInStepDone(false); setAddAccountError(null); setProcessStatus(null); }}>Add Account</button>
           </section>
         ) : (
           <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
@@ -743,7 +807,7 @@ export default function App() {
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5">
             <h3 className="text-lg font-semibold text-zinc-100">Add Account</h3>
             <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
-              {['Setup check', 'Open Codex Login', 'Account details', 'Save This Account'].map((label, idx) => (
+              {['Step 1: Open Codex', 'Step 2: Sign in', 'Step 3: Close Codex', 'Step 4: Save This Account'].map((label, idx) => (
                 <div key={label} className={`rounded-lg border px-2 py-1 text-center ${addStep >= idx ? 'border-cyan-500/70 bg-cyan-900/20 text-cyan-200' : 'border-zinc-700 text-zinc-500'}`}>{label}</div>
               ))}
             </div>
@@ -757,8 +821,9 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <p className="text-zinc-200">Setup looks good. Continue to open login.</p>
-                    <button className="mt-3 rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => setAddStep(1)}>Continue</button>
+                    <p className="text-zinc-200">Step 1: Open Codex.</p>
+                    <p className="mt-2 text-zinc-300">After signing in, close Codex completely before saving this account. Carousel needs Codex closed so it can safely copy the local login files.</p>
+                    <button className="mt-3 rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={() => setAddStep(1)}>Open Codex Login</button>
                   </>
                 )}
               </section>
@@ -766,16 +831,34 @@ export default function App() {
 
             {addStep === 1 && (
               <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
-                <p className="text-zinc-200">Open Codex and sign in with the ChatGPT/OpenAI account you want to save.</p>
+                <p className="text-zinc-200">Step 2: Sign in with ChatGPT/OpenAI.</p>
+                <p className="mt-2 text-zinc-300">Open Codex and complete login with the account you want to save in Carousel.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button className="rounded border border-cyan-500/70 px-3 py-2 text-cyan-200" onClick={openCodex}>Open Codex Login</button>
-                  <button className="rounded border border-zinc-600 px-3 py-2 text-zinc-200" onClick={() => { setLoggedInStepDone(true); setAddStep(2); }}>I Logged In</button>
+                  <button className="rounded border border-zinc-600 px-3 py-2 text-zinc-200" onClick={() => { setLoggedInStepDone(true); setAddStep(2); }}>I Signed In</button>
                 </div>
               </section>
             )}
 
             {addStep === 2 && (
+              <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
+                <p className="text-zinc-200">Step 3: Close Codex completely.</p>
+                <p className="mt-2 text-zinc-300">Close all Codex windows first, then click Check Again to confirm it is no longer running.</p>
+                {addAccountError && <p className="mt-2 rounded border border-rose-500/50 bg-rose-900/20 px-2 py-1.5 text-rose-100">{addAccountError}</p>}
+                {processStatus?.running && processStatus.processes.length > 0 && (
+                  <p className="mt-2 text-xs text-amber-200">Detected: {processStatus.processes.join(', ')}</p>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="rounded border border-zinc-600 px-3 py-2 text-sm text-zinc-200" onClick={() => setAddStep(1)}>Back</button>
+                  <button className="rounded border border-cyan-500/70 px-3 py-2 text-sm text-cyan-200" onClick={() => void checkCodexProcess()} disabled={checkingProcess}>{checkingProcess ? 'Checking…' : 'Check Again'}</button>
+                  <button className="rounded border border-emerald-500/70 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50" onClick={() => setAddStep(3)} disabled={processStatus?.running !== false}>I closed Codex</button>
+                </div>
+              </section>
+            )}
+
+            {addStep === 3 && (
               <section className="mt-4 grid gap-3 md:grid-cols-2">
+                <p className="md:col-span-2 text-sm text-zinc-300">Step 4: Save This Account.</p>
                 <label className="text-sm text-zinc-300">Account Name
                   <input className={inputClass} value={captureForm.alias} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, alias: e.target.value })); }} />
                 </label>
@@ -791,23 +874,17 @@ export default function App() {
                   <input className={inputClass} value={captureForm.notes} onChange={(e) => { setCaptureTouched(true); setCaptureForm((v) => ({ ...v, notes: e.target.value })); }} />
                 </label>
                 <button className="rounded border border-zinc-600 px-3 py-2 text-sm text-zinc-200 md:col-span-2" onClick={() => { setCaptureForm(captureSaved); setCaptureTouched(false); }}>Reset Changes</button>
-                <button className="rounded border border-cyan-500/70 px-3 py-2 text-sm text-cyan-200 md:col-span-2" onClick={() => setAddStep(3)} disabled={!captureForm.alias.trim() || !loggedInStepDone}>Continue to Save</button>
-              </section>
-            )}
-
-            {addStep === 3 && (
-              <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
-                <p className="text-zinc-200">Save this local Codex login as a switchable account.</p>
                 {addAccountError && <p className="mt-2 rounded border border-rose-500/50 bg-rose-900/20 px-2 py-1.5 text-rose-100">{addAccountError}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-wrap gap-2 md:col-span-2">
                   <button className="rounded border border-zinc-600 px-3 py-2 text-sm" onClick={() => setAddStep(2)}>Back</button>
-                  <button className="rounded border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950" onClick={saveAccount}>Save This Account</button>
+                  <button className="rounded border border-cyan-500/70 px-3 py-2 text-sm text-cyan-200" onClick={() => void checkCodexProcess()} disabled={checkingProcess}>{checkingProcess ? 'Checking…' : 'Check Again'}</button>
+                  <button className="rounded border border-emerald-400/60 bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50" onClick={saveAccount} disabled={!captureForm.alias.trim() || !loggedInStepDone || processStatus?.running !== false}>Save This Account</button>
                 </div>
               </section>
             )}
 
             <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm" onClick={() => { setAddModalOpen(false); setAddStep(0); setAddAccountError(null); }}>Cancel</button>
+              <button className="rounded-lg border border-zinc-600 px-3 py-2 text-sm" onClick={() => { setAddModalOpen(false); setAddStep(0); setAddAccountError(null); setProcessStatus(null); }}>Cancel</button>
             </div>
           </div>
         </div>

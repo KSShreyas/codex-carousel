@@ -20,5 +20,11 @@ describe('codex discovery/setup endpoints are wired', () => {
 
   it('includes friendly add-current-login account endpoint', () => {
     expect(server).toContain("app.post('/api/accounts/add-current-login'");
+    expect(server).toContain('code: mapped.code');
+  });
+
+  it('includes codex process status endpoint', () => {
+    expect(server).toContain("app.get('/api/codex/process-status'");
+    expect(server).toContain('getCodexProcessStatus');
   });
 });

@@ -35,6 +35,35 @@ function parseBoolean(input: any, fallback: boolean): boolean {
   return fallback;
 }
 
+type AddAccountErrorCode =
+  | 'CODEX_RUNNING'
+  | 'SETUP_REQUIRED'
+  | 'DATA_FOLDER_MISSING'
+  | 'NO_LOGIN_DATA_FOUND'
+  | 'UNKNOWN';
+
+function sanitizeErrorMessage(input: unknown): string {
+  return String(input ?? 'Unknown error').replace(/^Error:\s*/i, '').trim();
+}
+
+function mapAddAccountError(input: unknown): { error: string; code: AddAccountErrorCode; status: number } {
+  const message = sanitizeErrorMessage(input);
+  const lower = message.toLowerCase();
+  if (lower.includes('codex appears to be running') || lower.includes('codex process appears to be running')) {
+    return { error: 'Codex is still open. Close Codex completely, then click Check Again.', code: 'CODEX_RUNNING', status: 400 };
+  }
+  if (lower.includes('local switching is disabled')) {
+    return { error: 'Account switching setup is not complete. Open Advanced Settings and finish setup.', code: 'SETUP_REQUIRED', status: 400 };
+  }
+  if (lower.includes('codexprofilerootpath is not configured') || lower.includes('configured codexprofilerootpath does not exist')) {
+    return { error: 'Codex data folder was not found. Open Advanced Settings and choose the correct data folder.', code: 'DATA_FOLDER_MISSING', status: 400 };
+  }
+  if (lower.includes('no codex profile files discovered')) {
+    return { error: 'Codex login data was not found. Open Codex, sign in, close Codex, then try again.', code: 'NO_LOGIN_DATA_FOUND', status: 400 };
+  }
+  return { error: message || 'Could not save account.', code: 'UNKNOWN', status: 400 };
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.CAROUSEL_PORT ?? 3000);
@@ -321,27 +350,34 @@ async function startServer() {
   app.post('/api/profiles/capture-current', async (req, res) => {
     const alias = req.body?.alias;
     const plan = parsePlan(req.body?.plan);
-    if (!alias) return res.status(400).json({ error: 'alias is required' });
+    if (!alias) return res.status(400).json({ error: 'Account name is required', code: 'UNKNOWN' satisfies AddAccountErrorCode });
 
     try {
       const result = await switchEngine.captureCurrentProfile({ alias, plan });
       res.status(201).json(result);
     } catch (error) {
-      res.status(400).json({ error: String(error) });
+      const mapped = mapAddAccountError(error);
+      res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
     }
   });
 
   app.post('/api/accounts/add-current-login', async (req, res) => {
     const alias = req.body?.alias;
     const plan = parsePlan(req.body?.plan);
-    if (!alias) return res.status(400).json({ error: 'Account name is required' });
+    if (!alias?.trim()) return res.status(400).json({ error: 'Account name is required', code: 'UNKNOWN' satisfies AddAccountErrorCode });
 
     try {
-      const result = await switchEngine.captureCurrentProfile({ alias, plan });
+      const result = await switchEngine.captureCurrentProfile({ alias: alias.trim(), plan });
       res.status(201).json(result);
     } catch (error) {
-      res.status(400).json({ error: String(error) });
+      const mapped = mapAddAccountError(error);
+      res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
     }
+  });
+
+  app.get('/api/codex/process-status', async (_req, res) => {
+    const status = await switchEngine.getCodexProcessStatus();
+    res.json(status);
   });
 
   app.post('/api/codex/launch', async (_req, res) => {

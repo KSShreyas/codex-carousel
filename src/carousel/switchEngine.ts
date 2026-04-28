@@ -527,6 +527,11 @@ export class SwitchEngine {
     return [];
   }
 
+  async getCodexProcessStatus() {
+    const processes = await this.listCodexProcesses();
+    return { running: processes.length > 0, processes };
+  }
+
   private ensureLocalSwitchingEnabled() {
     if (!this.store.getSettings().localSwitchingEnabled) {
       throw new Error('Local switching is disabled. Enable settings.localSwitchingEnabled first.');

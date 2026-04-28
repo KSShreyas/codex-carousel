@@ -25,8 +25,8 @@ describe('backend error translation helper', () => {
 
   it('maps capture/save account specific backend errors', () => {
     expect(translateBackendError('codexProfileRootPath is not configured')).toBe('Codex data folder is not configured. Run setup first.');
-    expect(translateBackendError('Codex process appears to be running')).toBe('Close Codex, then click Save This Account again.');
-    expect(translateBackendError('No Codex profile files discovered under configured codexProfileRootPath')).toBe('Codex login data was not found in the selected data folder. Open Codex, sign in, then try again. If it still fails, choose another Codex data folder in Advanced Settings.');
+    expect(translateBackendError('Codex process appears to be running')).toBe('Codex is still open. Close Codex completely, then click Check Again.');
+    expect(translateBackendError('No Codex profile files discovered under configured codexProfileRootPath')).toBe('Codex login data was not found. Open Codex, sign in, close Codex, then try again.');
   });
 
   it('strips raw Error prefix and falls back gracefully', () => {
